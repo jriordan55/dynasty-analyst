@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from src.adp import lookup_adp
 from src.analysis import CORE_POSITIONS, FLEX_POSITIONS, analyze_team_needs, grade_roster
 from src.models import (
@@ -12,6 +14,75 @@ from src.models import (
     TradeProposal,
 )
 from src.player_intel import PlayerIntel
+
+PICK_LABEL = re.compile(r"(?P<season>\d{4}).*?[Rr]d?\s*(?P<round>\d+)")
+
+
+def _player_sleeper_id(player: dict, intel: PlayerIntel) -> str | None:
+    pid = player.get("id")
+    if pid:
+        return str(pid)
+    sp = intel._lookup_sleeper(player.get("name", ""))
+    if sp:
+        return str(sp.get("player_id") or "")
+    return None
+
+
+def _fc_player_value(
+    name: str,
+    player: dict | None,
+    intel: PlayerIntel,
+    fc_client,
+) -> int:
+    if not fc_client:
+        return 0
+    sid = _player_sleeper_id(player, intel) if player else None
+    fc = fc_client.get(name, sid)
+    return fc.value if fc else 0
+
+
+def _parse_pick_label(label: str) -> tuple[str, int, int | None] | None:
+    m = PICK_LABEL.search(label)
+    if not m:
+        return None
+    slot = None
+    orig = re.search(r"orig R(\d+)", label, re.I)
+    if orig:
+        slot = int(orig.group(1))
+    return m.group("season"), int(m.group("round")), slot
+
+
+def _fc_pick_value(label: str, fc_client) -> int:
+    if not fc_client:
+        return 0
+    parsed = _parse_pick_label(label)
+    if not parsed:
+        return 0
+    season, rnd, slot = parsed
+    fc = fc_client.pick_value(season, rnd, slot)
+    return fc.value if fc else 0
+
+
+def _enrich_player_value(
+    pv: PlayerValue,
+    player: dict,
+    intel: PlayerIntel,
+    fc_client=None,
+    fp_client=None,
+) -> None:
+    if fc_client:
+        fc = fc_client.get(pv.name, _player_sleeper_id(player, intel))
+        if fc:
+            pv.fc_value = fc.value
+            pv.fc_trend = fc.trend_label
+            if fc.trend_label not in pv.summary:
+                pv.summary = f"FantasyCalc {fc.display_value} · {fc.trend_label} · {pv.summary}".strip(" · ")
+    if fp_client and fp_client.available:
+        fp = fp_client.get(pv.name)
+        if fp and fp.summary:
+            pv.fp_summary = fp.summary
+            if fp.summary not in pv.summary:
+                pv.summary = f"{fp.summary} · {pv.summary}".strip(" · ")
 
 QUALITY_TIERS = [
     (82, "Elite"),
@@ -55,6 +126,8 @@ def compute_player_value(
     *,
     is_starter: bool = False,
     contending: bool = True,
+    fc_client=None,
+    fp_client=None,
 ) -> PlayerValue:
     name = player["name"]
     pos = player["position"]
@@ -132,7 +205,7 @@ def compute_player_value(
     if age:
         summary_parts.append(f"Age {age}")
 
-    return PlayerValue(
+    pv = PlayerValue(
         name=name,
         position=pos,
         dynasty_value=value,
@@ -146,6 +219,8 @@ def compute_player_value(
         summary=" · ".join(summary_parts[:5]),
         tradeable=True,
     )
+    _enrich_player_value(pv, player, intel, fc_client, fp_client)
+    return pv
 
 
 def pick_label(season: str, round_no: int, original_roster_id: int | None = None) -> str:
@@ -324,10 +399,15 @@ def analyze_position_unit(
     needs: TeamNeeds,
     *,
     contending: bool = True,
+    fc_client=None,
+    fp_client=None,
 ) -> PositionUnit:
     players = [p for p in team["players"] if p["position"] == position]
     values = [
-        compute_player_value(p, intel, is_starter=p.get("is_starter", False), contending=contending)
+        compute_player_value(
+            p, intel, is_starter=p.get("is_starter", False),
+            contending=contending, fc_client=fc_client, fp_client=fp_client,
+        )
         for p in players
     ]
     values.sort(key=lambda v: v.dynasty_value, reverse=True)
@@ -387,10 +467,15 @@ def build_team_trade_profile(
     intel: PlayerIntel,
     tendency: ManagerTendency,
     config: dict,
+    fc_client=None,
+    fp_client=None,
 ) -> TeamTradeProfile:
     contending = config.get("notes", {}).get("contending", True)
     units = [
-        analyze_position_unit(team, pos, intel, needs, contending=contending)
+        analyze_position_unit(
+            team, pos, intel, needs, contending=contending,
+            fc_client=fc_client, fp_client=fp_client,
+        )
         for pos in CORE_POSITIONS
     ]
 
@@ -398,7 +483,10 @@ def build_team_trade_profile(
     grade_map = {g["name"]: g["grade"] for g in graded}
 
     all_values = [
-        compute_player_value(p, intel, is_starter=p.get("is_starter", False), contending=contending)
+        compute_player_value(
+            p, intel, is_starter=p.get("is_starter", False), contending=contending,
+            fc_client=fc_client, fp_client=fp_client,
+        )
         for p in team["players"]
         if p["position"] in CORE_POSITIONS
     ]
@@ -429,7 +517,11 @@ def build_team_trade_profile(
         rnd = int(dp.get("round") or 1)
         orig = dp.get("roster_id")
         label = pick_label(season, rnd, orig)
-        val = compute_pick_value(season, rnd, orig)
+        if fc_client:
+            fc = fc_client.pick_value(season, rnd, orig)
+            val = float(fc.value if fc else compute_pick_value(season, rnd, orig))
+        else:
+            val = compute_pick_value(season, rnd, orig)
         pick_labels.append(label)
         pick_values.append((label, val))
 
@@ -527,6 +619,8 @@ def build_trade_proposals(
     config: dict,
     *,
     max_proposals: int = 3,
+    fc_client=None,
+    fp_client=None,
 ) -> list[TradeProposal]:
     if other_profile.owner_id == my_profile.owner_id:
         return []
@@ -623,6 +717,23 @@ def build_trade_proposals(
         send_val += sum(v for l, v in my_profile.pick_values if l in send_picks)
         recv_val = sum(g.dynasty_value for g in get_list)
         recv_val += sum(v for l, v in other_profile.pick_values if l in recv_picks)
+
+        fc_eval = None
+        if fc_client:
+            fc_eval = fc_client.evaluate_trade(
+                give_names,
+                get_names,
+                send_picks=[parsed for p in send_picks if (parsed := _parse_pick_label(p))],
+                receive_picks=[parsed for p in recv_picks if (parsed := _parse_pick_label(p))],
+                sleeper_ids={
+                    p["name"]: sid for p in my_team["players"]
+                    if (sid := _player_sleeper_id(p, intel))
+                },
+            )
+            if fc_eval["send_total"] or fc_eval["receive_total"]:
+                send_val = fc_eval["send_total"]
+                recv_val = fc_eval["receive_total"]
+
         delta = recv_val - send_val
 
         leverage = 0.0
@@ -654,16 +765,25 @@ def build_trade_proposals(
 
         why_win = (
             f"You upgrade {get_list[0].position} with {get_names[0]} "
-            f"({get_list[0].dynasty_value:.0f} value, {get_list[0].summary})."
+            f"({get_list[0].summary})."
         )
+        if fc_eval and fc_eval["receive_total"]:
+            why_win += f" FantasyCalc: {fc_eval['verdict']} ({fc_eval['delta']:+,})."
+
+        fp_bits = [g.fp_summary for g in get_list if g.fp_summary]
+        fp_insight = fp_bits[0] if fp_bits else ""
 
         risks = []
         if any(g.injury for g in get_list):
             risks.append("Injury risk on incoming player")
-        if delta < -5:
+        if fc_eval and fc_eval["delta"] < -max(200, fc_eval["send_total"] * 0.05):
+            risks.append("FantasyCalc flags this as an overpay")
+        if delta < -5 and not fc_eval:
             risks.append("You pay a premium — needs counter-move")
         if not risks:
             risks.append("Monitor news before sending")
+
+        fairness_label = fc_eval["verdict"] if fc_eval and fc_eval["receive_total"] else _fairness_label(delta)
 
         proposals.append(
             TradeProposal(
@@ -676,12 +796,17 @@ def build_trade_proposals(
                 send_value=round(send_val, 1),
                 receive_value=round(recv_val, 1),
                 value_delta=round(delta, 1),
-                fairness=_fairness_label(delta),
+                fairness=fairness_label,
                 leverage_score=round(leverage, 1),
                 confidence=_confidence(leverage, delta, tendency_match),
                 why_they_accept=why_accept,
                 why_you_win=why_win,
                 risk_notes=" · ".join(risks),
+                fc_send_total=fc_eval["send_total"] if fc_eval else 0,
+                fc_receive_total=fc_eval["receive_total"] if fc_eval else 0,
+                fc_delta=fc_eval["delta"] if fc_eval else 0,
+                fc_verdict=fc_eval["verdict"] if fc_eval else "",
+                fp_insight=fp_insight,
             )
         )
 
@@ -695,6 +820,8 @@ def analyze_league_trades(
     config: dict,
     intel: PlayerIntel,
     keeper_plan=None,
+    fc_client=None,
+    fp_client=None,
 ) -> tuple[list[TeamTradeProfile], list[TradeProposal], dict[str, ManagerTendency]]:
     all_needs = [analyze_team_needs(t, config) for t in snapshot["teams"]]
     tendencies = build_manager_tendencies(snapshot, intel)
@@ -719,7 +846,10 @@ def analyze_league_trades(
             likes=[],
             notes="",
         )
-        profile = build_team_trade_profile(team, needs, intel, tendency, config)
+        profile = build_team_trade_profile(
+            team, needs, intel, tendency, config,
+            fc_client=fc_client, fp_client=fp_client,
+        )
         if team.get("is_mine"):
             my_profile = profile
         profiles.append(profile)
@@ -752,7 +882,8 @@ def analyze_league_trades(
                 match_score += 3
         other.best_match_score = match_score
         proposals = build_trade_proposals(
-            my_team, my_needs, my_profile, other, intel, config, max_proposals=2,
+            my_team, my_needs, my_profile, other, intel, config,
+            max_proposals=2, fc_client=fc_client, fp_client=fp_client,
         )
         all_proposals.extend(proposals)
 

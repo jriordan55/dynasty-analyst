@@ -14,6 +14,8 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
+from src.fantasycalc import FantasyCalcClient
+from src.fantasypros import FantasyProsClient
 from src.trade_analysis import analyze_league_trades, proposals_to_legacy_matches
 from src.draft import (
     build_draft_board,
@@ -43,6 +45,7 @@ def load_config() -> dict:
 
     config["league_id"] = config.get("league_id") or os.getenv("SLEEPER_LEAGUE_ID", "")
     config["username"] = config.get("username") or os.getenv("SLEEPER_USERNAME", "")
+    config["fantasypros_api_key"] = config.get("fantasypros_api_key") or os.getenv("FANTASYPROS_API_KEY", "")
     return config
 
 
@@ -161,12 +164,26 @@ class DynastyAnalyst:
         _, my_team = self._ensure_loaded()
         return find_sell_candidates(my_team, self.adp_map, self.config, self.intel())
 
+    def _market_clients(self):
+        snapshot = self._ensure_snapshot()
+        cfg = {**self.config, "league": snapshot.get("league") or {}}
+        fc = FantasyCalcClient(cfg)
+        fc.load()
+        fp_key = self.config.get("fantasypros_api_key") or os.getenv("FANTASYPROS_API_KEY", "")
+        fp = FantasyProsClient(api_key=fp_key, config=cfg)
+        fp.load()
+        return fc, fp
+
     def _trade_analysis(self):
         snapshot, my_team = self._ensure_loaded()
         keepers = self.config.get("keepers") or self.get_keepers()
-        cfg = {**self.config, "keepers": keepers}
+        cfg = {**self.config, "keepers": keepers, "league": snapshot.get("league") or {}}
         plan = build_keeper_plan(my_team, keepers, self.adp_map, cfg, self.draft_state())
-        return analyze_league_trades(snapshot, my_team, cfg, self.intel(), keeper_plan=plan)
+        fc, fp = self._market_clients()
+        return analyze_league_trades(
+            snapshot, my_team, cfg, self.intel(), keeper_plan=plan,
+            fc_client=fc, fp_client=fp,
+        )
 
     def trade_targets(self) -> list:
         _, proposals, _ = self._trade_analysis()

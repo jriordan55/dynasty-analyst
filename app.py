@@ -29,7 +29,7 @@ def get_config() -> dict:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     base = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
     try:
-        for key in ("league_id", "username", "league_name"):
+        for key in ("league_id", "username", "league_name", "fantasypros_api_key"):
             if key in st.secrets:
                 base[key] = st.secrets[key]
     except Exception:
@@ -685,9 +685,15 @@ with tab_league:
 
         if section == "Trade proposals":
             st.caption(
-                "Value-based packages using ADP, VOR, upside, injuries, trends, "
-                "positional quality, and manager history."
+                "Trade values powered by [FantasyCalc](https://www.fantasycalc.com/trade-calculator) "
+                "(real trades). Player insights from [FantasyPros](https://www.fantasypros.com/nfl/) when API key is set."
             )
+            fp_key = config.get("fantasypros_api_key") or ""
+            if not fp_key:
+                st.info(
+                    "Add **FANTASYPROS_API_KEY** in Streamlit secrets or `.env` for ECR rankings & projections. "
+                    "[Request free API access](https://www.fantasypros.com/api-data/)"
+                )
             if not proposals:
                 st.info("No strong proposals yet — sync league data or check Team breakdown for manual targets.")
             else:
@@ -705,8 +711,16 @@ with tab_league:
                             st.markdown("**You get**")
                             st.markdown(" · ".join(recv) if recv else "—")
                         with c3:
-                            st.metric("Value in", f"{p.receive_value:.0f}")
-                            st.caption(f"Out {p.send_value:.0f} · Δ {p.value_delta:+.0f} · {p.fairness}")
+                            if p.fc_receive_total:
+                                st.metric("FantasyCalc in", f"{p.fc_receive_total:,}")
+                                st.caption(
+                                    f"Out {p.fc_send_total:,} · Δ {p.fc_delta:+,} · {p.fc_verdict or p.fairness}"
+                                )
+                            else:
+                                st.metric("Value in", f"{p.receive_value:.0f}")
+                                st.caption(f"Out {p.send_value:.0f} · Δ {p.value_delta:+.0f} · {p.fairness}")
+                        if p.fp_insight:
+                            st.caption(f"**FantasyPros:** {p.fp_insight}")
                         st.caption(f"**Why they bite:** {_truncate(p.why_they_accept, 120)}")
                         st.caption(f"**Why you win:** {_truncate(p.why_you_win, 120)} · *{p.risk_notes}*")
 
@@ -746,9 +760,11 @@ with tab_league:
                     adf = pd.DataFrame([{
                         "Player": v.name,
                         "Pos": v.position,
-                        "Value": v.dynasty_value,
+                        "FantasyCalc": f"{v.fc_value:,}" if v.fc_value else "—",
+                        "FC Trend": v.fc_trend or "—",
                         "Grade": v.grade,
-                        "Profile": _truncate(v.summary, 60),
+                        "FantasyPros": _truncate(v.fp_summary, 40) or "—",
+                        "Profile": _truncate(v.summary, 50),
                     } for v in profile.tradeable_assets[:8]])
                     _safe_dataframe(adf, height=280)
                 else:
@@ -758,9 +774,10 @@ with tab_league:
                 tdf = pd.DataFrame([{
                     "Player": v.name,
                     "Pos": v.position,
-                    "Value": v.dynasty_value,
+                    "FantasyCalc": f"{v.fc_value:,}" if v.fc_value else "—",
                     "Grade": v.grade,
-                    "Profile": _truncate(v.summary, 60),
+                    "FantasyPros": _truncate(v.fp_summary, 40) or "—",
+                    "Profile": _truncate(v.summary, 50),
                 } for v in profile.targets_on_roster])
                 _safe_dataframe(tdf, height=280)
 

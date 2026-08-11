@@ -74,6 +74,9 @@ class PlayerValue:
     injury: str
     summary: str
     tradeable: bool = True
+    fc_value: int | None = None
+    fc_trend: str = ""
+    fp_summary: str = ""
 
 
 @dataclass
@@ -144,6 +147,11 @@ class TradeProposal:
     why_they_accept: str
     why_you_win: str
     risk_notes: str
+    fc_send_total: int = 0
+    fc_receive_total: int = 0
+    fc_delta: int = 0
+    fc_verdict: str = ""
+    fp_insight: str = ""
 
 
 @dataclass
