@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from src.analyst import DynastyAnalyst, load_config
+from src.draft import format_pick_label
 from src.news import get_news_client
 
 ROOT = Path(__file__).resolve().parent
@@ -410,7 +411,9 @@ with tab_draft:
                 "ADP": _cell(b.adp),
                 "Tier": b.tier,
                 "Fit": b.fit_score,
+                "Upside": b.upside_score,
                 "Why": b.fit_reason,
+                "Role/Breakout": b.upside_note or "—",
                 "News/Injury": b.news_flag or "—",
                 "Team": b.team or "—",
             } for b in board[:60]])
@@ -423,10 +426,48 @@ with tab_draft:
             )
             st.dataframe(styled, width="stretch", hide_index=True)
 
-        recs = analyst.pick_recommendations(keeper_names=keepers, limit=5)
-        st.subheader("Top 5 picks for your build")
+        upside = analyst.upside_targets(keeper_names=keepers, limit=20)
+        st.subheader("High upside & bigger roles")
+        st.caption("Players with path to expanded usage — depth chart climb, trending adds, role-change news, youth.")
+        if upside:
+            udf = pd.DataFrame([{
+                "Player": u.player,
+                "Pos": u.position,
+                "ADP": _cell(u.adp),
+                "Upside": u.upside_score,
+                "Insight": u.insight,
+                "Team": u.team or "—",
+            } for u in upside])
+            styled_u = udf.style.apply(
+                lambda row: (
+                    ["background-color: #312e81; color: #eef2ff"] * len(row)
+                    if float(row["Upside"]) >= 50 else [""] * len(row)
+                ),
+                axis=1,
+            )
+            st.dataframe(styled_u, width="stretch", hide_index=True)
+        else:
+            st.info("No high-upside targets found in the current pool.")
+
+        draft = analyst.draft_state()
+        my_slot = (draft or {}).get("my_slot")
+        teams = (draft or {}).get("teams") or len((draft or {}).get("draft_order") or {}) or 12
+        recs, next_picks, target_pick = analyst.pick_recommendations(
+            keeper_names=keepers, limit=5, draft=draft, my_slot=my_slot,
+        )
+        if my_slot and target_pick:
+            st.subheader(f"Best picks for {format_pick_label(target_pick, teams)}")
+            if len(next_picks) > 1:
+                upcoming = ", ".join(format_pick_label(p, teams) for p in next_picks[:4])
+                st.caption(f"Your slot **{my_slot}** · Upcoming picks: {upcoming}")
+        else:
+            st.subheader("Top 5 picks for your build")
         for i, r in enumerate(recs, 1):
-            st.markdown(f"**{i}. {r.player}** ({r.position}, ADP {_cell(r.adp)}) — Fit {r.fit_score:.0f} · {r.reason}")
+            upside_tag = f" · Upside {r.upside_score:.0f}" if r.upside_score >= 35 else ""
+            st.markdown(
+                f"**{i}. {r.player}** ({r.position}, ADP {_cell(r.adp)}) — "
+                f"Fit {r.fit_score:.0f}{upside_tag} · {r.reason}"
+            )
     except Exception as e:
         st.error(f"Draft board failed: {e}")
 
@@ -457,17 +498,34 @@ with tab_live:
                     st.info(f"On the clock: **{on_clock.get('manager')}** — Pick {on_clock.get('pick_no')} (Round {on_clock.get('round')})")
 
             keepers = config.get("keepers") or analyst.get_keepers()
-            recs = analyst.pick_recommendations(keeper_names=keepers, limit=5)
+            recs, next_picks, target_pick = analyst.pick_recommendations(
+                keeper_names=keepers,
+                limit=5,
+                draft=live,
+                my_slot=my_slot,
+                on_clock=is_my_pick,
+            )
+            teams = live.get("teams") or len(live.get("draft_order") or {}) or 12
+
+            if my_slot and next_picks:
+                upcoming = ", ".join(format_pick_label(p, teams) for p in next_picks[:4])
+                st.caption(f"Your upcoming picks: {upcoming}")
+
             if is_my_pick:
-                st.subheader("Pick this now")
+                pick_label = format_pick_label(on_clock.get("pick_no") or target_pick or 0, teams)
+                st.subheader(f"Pick this now — {pick_label}")
                 for i, r in enumerate(recs, 1):
+                    upside_tag = f" · Upside {r.upside_score:.0f}" if r.upside_score >= 35 else ""
                     st.markdown(
                         f"### {i}. {r.player} ({r.position})\n"
-                        f"ADP {_cell(r.adp)} · Fit **{r.fit_score:.0f}** — {r.reason}"
+                        f"ADP {_cell(r.adp)} · Fit **{r.fit_score:.0f}**{upside_tag} — {r.reason}"
                     )
             else:
-                st.subheader("Best available for your team")
-                for i, r in enumerate(recs[:3], 1):
+                if target_pick:
+                    st.subheader(f"Targets for your next pick — {format_pick_label(target_pick, teams)}")
+                else:
+                    st.subheader("Best available for your team")
+                for i, r in enumerate(recs[:5], 1):
                     st.markdown(f"**{i}. {r.player}** ({r.position}, ADP {_cell(r.adp)}) — {r.reason}")
 
             picks = live.get("picks", [])

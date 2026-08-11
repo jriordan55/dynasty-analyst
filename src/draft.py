@@ -10,7 +10,55 @@ from src.models import (
     PickRecommendation,
     Player,
     TeamNeeds,
+    UpsideTarget,
 )
+
+
+def pick_no_for_slot_round(slot: int, round_no: int, teams: int) -> int:
+    """Snake draft pick number for a given slot and round."""
+    if round_no % 2 == 1:
+        return (round_no - 1) * teams + slot
+    return round_no * teams - slot + 1
+
+
+def round_for_pick_no(pick_no: int, teams: int) -> int:
+    return (pick_no - 1) // teams + 1
+
+
+def upcoming_pick_numbers(
+    slot: int,
+    teams: int,
+    from_pick: int,
+    count: int = 4,
+    max_rounds: int = 16,
+) -> list[int]:
+    """Your next snake pick numbers starting at or after from_pick."""
+    picks: list[int] = []
+    for rnd in range(1, max_rounds + 1):
+        p = pick_no_for_slot_round(slot, rnd, teams)
+        if p >= from_pick:
+            picks.append(p)
+    picks.sort()
+    return picks[:count]
+
+
+def draft_teams(draft: dict | None, fallback: int = 12) -> int:
+    if not draft:
+        return fallback
+    return draft.get("teams") or len(draft.get("draft_order") or {}) or fallback
+
+
+def adp_window_for_pick(pick_no: int, on_clock: bool) -> tuple[int, int]:
+    """ADP range likely still available at this pick."""
+    if on_clock:
+        return max(1, pick_no - 5), pick_no + 25
+    return max(1, pick_no - 10), pick_no + 8
+
+
+def format_pick_label(pick_no: int, teams: int) -> str:
+    rnd = round_for_pick_no(pick_no, teams)
+    slot_in_round = pick_no - (rnd - 1) * teams
+    return f"Pick {pick_no} (Rd {rnd}, #{slot_in_round})"
 
 
 def _adp_tier(adp: int | None) -> int:
@@ -185,9 +233,13 @@ def build_draft_board(
             fit, reason = intel.adjust_fit_score(player.name, player.position, fit, reason)
         flag = intel.flags_text(player.name, player.position) if intel else _news_flags_for_player(player.name, news, injuries)
         adp_val = player.adp
+        upside_score = 0.0
+        upside_note = ""
         if intel:
             ctx = intel.get(player.name, player.position)
             adp_val = ctx.blended_adp or adp_val
+            upside_score = ctx.upside_score
+            upside_note = ctx.upside_note
         entries.append(
             DraftBoardEntry(
                 player=player.name,
@@ -198,6 +250,8 @@ def build_draft_board(
                 fit_reason=reason,
                 news_flag=flag,
                 tier=_adp_tier(adp_val),
+                upside_score=round(upside_score, 1),
+                upside_note=upside_note,
             )
         )
 
@@ -205,28 +259,108 @@ def build_draft_board(
     return entries[:limit]
 
 
+def build_upside_targets(
+    adp_map: dict[str, Player],
+    snapshot: dict,
+    intel=None,
+    limit: int = 25,
+) -> list[UpsideTarget]:
+    draft = snapshot.get("draft")
+    drafted = _drafted_names(draft)
+    targets: list[UpsideTarget] = []
+
+    for player in adp_map.values():
+        if player.name.lower() in drafted:
+            continue
+        if player.position not in CORE_POSITIONS:
+            continue
+        if not intel:
+            continue
+        ctx = intel.get(player.name, player.position)
+        if ctx.injury_penalty >= 30 or ctx.upside_score < 25:
+            continue
+        targets.append(
+            UpsideTarget(
+                player=player.name,
+                position=player.position,
+                adp=ctx.blended_adp or player.adp,
+                upside_score=ctx.upside_score,
+                insight=ctx.upside_note or "High-upside profile",
+                team=player.team,
+            )
+        )
+
+    targets.sort(key=lambda t: (-t.upside_score, t.adp or 999))
+    return targets[:limit]
+
+
 def recommend_picks(
     board: list[DraftBoardEntry],
     limit: int = 5,
+    target_pick: int | None = None,
+    on_clock: bool = False,
+    teams: int = 12,
 ) -> list[PickRecommendation]:
+    """Recommend picks — optionally scoped to a snake pick number."""
+    if target_pick:
+        lo, hi = adp_window_for_pick(target_pick, on_clock)
+        pool = [
+            e for e in board
+            if e.adp and lo <= e.adp <= hi
+            and "Injury: Out" not in e.news_flag
+            and "Injury: Doubtful" not in e.news_flag
+        ]
+        if not pool:
+            pool = [e for e in board if e.adp and e.adp >= target_pick - 15]
+    else:
+        pool = list(board)
+
+    def sort_key(e: DraftBoardEntry) -> tuple:
+        reach_penalty = 0
+        if target_pick and e.adp and e.adp < target_pick - 12:
+            reach_penalty = 20
+        return (-(e.fit_score + e.upside_score * 0.3 - reach_penalty), e.adp or 999)
+
     recs: list[PickRecommendation] = []
     seen_pos: dict[str, int] = {}
 
-    for entry in sorted(board, key=lambda e: (-e.fit_score, e.adp or 999)):
+    for entry in sorted(pool, key=sort_key):
         if entry.news_flag.lower().startswith("injury: out") or "injury: doubtful" in entry.news_flag.lower():
             continue
         if "Injury: Out" in entry.news_flag or "Injury: Doubtful" in entry.news_flag:
             continue
         pos_count = seen_pos.get(entry.position, 0)
-        if pos_count >= 2 and entry.fit_score < 70:
+        if pos_count >= 2 and entry.fit_score < 70 and not on_clock:
             continue
+
+        reason = entry.fit_reason
+        if entry.upside_note:
+            reason = f"{reason} · {entry.upside_note}" if reason else entry.upside_note
+        if entry.news_flag:
+            reason = f"{reason} · {entry.news_flag}" if reason else entry.news_flag
+        if target_pick and entry.adp:
+            delta = entry.adp - target_pick
+            if on_clock and delta <= 0:
+                avail = "great value at this pick"
+            elif on_clock:
+                avail = f"slight reach (+{delta} vs pick {target_pick})"
+            elif abs(delta) <= 5:
+                avail = f"should be there at pick {target_pick}"
+            elif delta > 5:
+                avail = f"may fall to pick {target_pick}"
+            else:
+                avail = f"unlikely to last until pick {target_pick}"
+            reason = f"{reason} · {avail}" if reason else avail
+
         recs.append(
             PickRecommendation(
                 player=entry.player,
                 position=entry.position,
                 adp=entry.adp,
                 fit_score=entry.fit_score,
-                reason=entry.fit_reason + (f" · {entry.news_flag}" if entry.news_flag else ""),
+                reason=reason,
+                target_pick=target_pick,
+                upside_score=entry.upside_score,
             )
         )
         seen_pos[entry.position] = pos_count + 1
@@ -237,6 +371,8 @@ def recommend_picks(
         for entry in board:
             if any(r.player == entry.player for r in recs):
                 continue
+            if "Injury: Out" in entry.news_flag:
+                continue
             recs.append(
                 PickRecommendation(
                     player=entry.player,
@@ -244,11 +380,43 @@ def recommend_picks(
                     adp=entry.adp,
                     fit_score=entry.fit_score,
                     reason=entry.fit_reason,
+                    target_pick=target_pick,
+                    upside_score=entry.upside_score,
                 )
             )
             if len(recs) >= limit:
                 break
     return recs
+
+
+def recommend_for_my_slot(
+    board: list[DraftBoardEntry],
+    draft: dict | None,
+    my_slot: int | None,
+    teams: int = 12,
+    on_clock: bool = False,
+    limit: int = 5,
+) -> tuple[list[PickRecommendation], list[int], int | None]:
+    """Pick recommendations tied to your snake draft slot."""
+    teams = draft_teams(draft, teams)
+    if not my_slot:
+        return recommend_picks(board, limit=limit), [], None
+
+    current_pick = 1
+    if draft:
+        current_pick = len(draft.get("picks", [])) + 1
+
+    if on_clock:
+        target = current_pick
+    else:
+        upcoming = upcoming_pick_numbers(my_slot, teams, current_pick, count=1)
+        target = upcoming[0] if upcoming else pick_no_for_slot_round(my_slot, 1, teams)
+
+    recs = recommend_picks(
+        board, limit=limit, target_pick=target, on_clock=on_clock, teams=teams,
+    )
+    next_picks = upcoming_pick_numbers(my_slot, teams, current_pick, count=4)
+    return recs, next_picks, target
 
 
 def _early_draft_positions(draft: dict | None, roster_id: int) -> list[str]:

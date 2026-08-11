@@ -18,6 +18,9 @@ from src.draft import (
     build_draft_board,
     build_keeper_plan,
     build_manager_profiles,
+    build_upside_targets,
+    format_pick_label,
+    recommend_for_my_slot,
     recommend_picks,
     sync_keepers_from_draft,
 )
@@ -214,9 +217,27 @@ class DynastyAnalyst:
             self.adp_map, snapshot, self.config, names, intel=intel, limit=limit,
         )
 
-    def pick_recommendations(self, keeper_names: list[str] | None = None, limit: int = 5) -> list:
+    def upside_targets(self, keeper_names: list[str] | None = None, limit: int = 25) -> list:
+        snapshot = self._ensure_snapshot()
+        intel = self.intel()
+        return build_upside_targets(self.adp_map, snapshot, intel=intel, limit=limit)
+
+    def pick_recommendations(
+        self,
+        keeper_names: list[str] | None = None,
+        limit: int = 5,
+        draft: dict | None = None,
+        my_slot: int | None = None,
+        on_clock: bool = False,
+    ) -> tuple[list, list[int], int | None]:
         board = self.draft_board(keeper_names=keeper_names, limit=100)
-        return recommend_picks(board, limit=limit)
+        draft = draft if draft is not None else self.draft_state()
+        if my_slot is None and draft:
+            my_slot = draft.get("my_slot")
+        teams = draft.get("teams") or len(draft.get("draft_order") or {}) or 12
+        return recommend_for_my_slot(
+            board, draft, my_slot, teams=teams, on_clock=on_clock, limit=limit,
+        )
 
     def manager_draft_profiles(self) -> list:
         snapshot = self._ensure_snapshot()

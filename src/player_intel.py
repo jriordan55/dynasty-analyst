@@ -39,7 +39,18 @@ class PlayerContext:
     news_headline: str = ""
     vor: float = 0.0
     role_note: str = ""
+    upside_score: float = 0.0
+    upside_note: str = ""
     flags: list[str] = field(default_factory=list)
+
+
+ROLE_UPSIDE_PATTERN = re.compile(
+    r"\b(starter|bellcow|bell cow|lead back|workhorse|wr1|alpha|expanded role|"
+    r"snap share|snap count|promoted|depth chart|breakout|camp standout|"
+    r"rb1|te1|starting job|feature back|hot hand|complement|inherited|"
+    r"first-team|first team|expanded|target share|touches|volume)\b",
+    re.I,
+)
 
 
 def _clean_name(name: str) -> str:
@@ -232,6 +243,13 @@ class PlayerIntel:
         if headline:
             flags.append("In news")
 
+        upside_score, upside_note = self._compute_upside(
+            sp, age=sp.get("age") if sp else None,
+            years_exp=sp.get("years_exp") if sp else None,
+            headline=headline, blended=blended, adp=adp,
+            depth=depth, trend=trend.get("signal", ""),
+        )
+
         return PlayerContext(
             name=name,
             position=pos,
@@ -248,8 +266,61 @@ class PlayerIntel:
             news_headline=headline,
             vor=vor,
             role_note=role_note,
+            upside_score=upside_score,
+            upside_note=upside_note,
             flags=flags,
         )
+
+    def _compute_upside(
+        self,
+        sp: dict | None,
+        age: int | None,
+        years_exp: int | None,
+        headline: str,
+        blended: int | None,
+        adp: int | None,
+        depth: int | None,
+        trend: str,
+    ) -> tuple[float, str]:
+        score = 0.0
+        reasons: list[str] = []
+
+        text = headline or ""
+        if ROLE_UPSIDE_PATTERN.search(text):
+            score += 28
+            snippet = text[:70] + ("…" if len(text) > 70 else "")
+            reasons.append(f"Role news: {snippet}")
+
+        if age and age <= 24:
+            score += 14
+            reasons.append(f"Age {age} — growth window")
+        if years_exp is not None and years_exp <= 2:
+            score += 10
+            reasons.append("Early-career breakout window")
+
+        if depth == 1 and blended and blended >= 60:
+            score += 14
+            reasons.append("Starter with room to grow")
+        elif depth == 2:
+            score += 20
+            reasons.append("Backup — one injury from a big role")
+        elif depth == 1:
+            score += 8
+            reasons.append("Listed as team starter")
+
+        if sp and sp.get("search_rank") and adp and sp["search_rank"] < adp - 15:
+            score += 16
+            reasons.append("Sleeper market rising fast")
+
+        if trend == "Hot add":
+            score += 10
+            reasons.append("League-mates stashing early")
+
+        if blended and 90 <= blended <= 200 and depth in (1, 2):
+            score += 12
+            reasons.append("Late-round path to volume")
+
+        return min(100.0, score), "; ".join(reasons[:3])
 
     def adjust_fit_score(self, name: str, position: str, base_score: float, base_reason: str) -> tuple[float, str]:
         ctx = self.get(name, position)
@@ -272,6 +343,10 @@ class PlayerIntel:
             reasons.append("backup role")
         if ctx.news_headline and "injury" in ctx.news_headline.lower():
             score -= 5
+        if ctx.upside_score >= 40:
+            score += min(10, ctx.upside_score / 5)
+            if ctx.upside_note:
+                reasons.append(ctx.upside_note.split(";")[0])
 
         score = min(100.0, max(0.0, score))
         return score, "; ".join(r for r in reasons if r)[:120]
@@ -287,6 +362,8 @@ class PlayerIntel:
             parts.append(ctx.role_note)
         if ctx.news_headline and not ctx.injury_status:
             parts.append("News")
+        if ctx.upside_score >= 35:
+            parts.append(f"Upside {ctx.upside_score:.0f}")
         return " · ".join(parts)
 
     def trending_add_targets(self, limit: int = 20) -> list[dict]:

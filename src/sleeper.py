@@ -127,6 +127,8 @@ class SleeperClient:
             "status": draft.get("status") or draft_meta.get("status"),
             "type": draft.get("type") or draft_meta.get("type"),
             "draft_order": slot_by_user,
+            "teams": total_rosters,
+            "rounds": rounds,
             "my_slot": my_slot,
             "my_user_id": my_user_id,
             "picks": enriched_picks,

@@ -83,6 +83,18 @@ class DraftBoardEntry:
     fit_reason: str
     news_flag: str
     tier: int
+    upside_score: float = 0.0
+    upside_note: str = ""
+
+
+@dataclass
+class UpsideTarget:
+    player: str
+    position: str
+    adp: int | None
+    upside_score: float
+    insight: str
+    team: str = ""
 
 
 @dataclass
@@ -92,6 +104,8 @@ class PickRecommendation:
     adp: int | None
     fit_score: float
     reason: str
+    target_pick: int | None = None
+    upside_score: float = 0.0
 
 
 @dataclass
