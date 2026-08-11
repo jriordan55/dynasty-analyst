@@ -71,3 +71,47 @@ class WaiverTarget:
     owned_pct: float | None
     reason: str
     priority: int
+
+
+@dataclass
+class DraftBoardEntry:
+    player: str
+    position: str
+    adp: int | None
+    team: str
+    fit_score: float
+    fit_reason: str
+    news_flag: str
+    tier: int
+
+
+@dataclass
+class PickRecommendation:
+    player: str
+    position: str
+    adp: int | None
+    fit_score: float
+    reason: str
+
+
+@dataclass
+class ManagerDraftProfile:
+    manager: str
+    team: str
+    draft_slot: int | None
+    rb_count: int
+    wr_count: int
+    qb_count: int
+    te_count: int
+    tendency: str
+    draft_prediction: str
+    keeper_positions: list[str]
+
+
+@dataclass
+class KeeperPlan:
+    keepers: list[dict]
+    max_keepers: int
+    post_keeper_counts: dict[str, int]
+    remaining_needs: list[str]
+    draft_priorities: list[str]

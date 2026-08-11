@@ -34,6 +34,15 @@ class SleeperClient:
     def get_users(self) -> list[dict]:
         return self._get(f"/league/{self.league_id}/users")
 
+    def get_drafts(self) -> list[dict]:
+        return self._get(f"/league/{self.league_id}/drafts")
+
+    def get_draft(self, draft_id: str) -> dict:
+        return self._get(f"/draft/{draft_id}")
+
+    def get_draft_picks(self, draft_id: str) -> list[dict]:
+        return self._get(f"/draft/{draft_id}/picks")
+
     def get_transactions(self, week: int | None = None) -> list[dict]:
         if week is None:
             state = self._get("/state/nfl")
@@ -76,6 +85,57 @@ class SleeperClient:
             )
         return None
 
+    def get_draft_state(self, my_user_id: str | None = None) -> dict | None:
+        """Latest league draft with picks and slot mapping."""
+        drafts = self.get_drafts()
+        if not drafts:
+            return None
+
+        draft_meta = drafts[0]
+        draft_id = draft_meta["draft_id"]
+        draft = self.get_draft(draft_id)
+        picks = self.get_draft_picks(draft_id)
+        users = self.get_users()
+        user_map = {u["user_id"]: u for u in users}
+
+        slot_by_user: dict[str, int] = {}
+        for uid, slot in (draft.get("draft_order") or draft_meta.get("draft_order") or {}).items():
+            slot_by_user[uid] = int(slot)
+
+        enriched_picks = []
+        for pick in picks:
+            meta = pick.get("metadata") or {}
+            name = meta.get("full_name") or f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
+            owner = user_map.get(pick.get("picked_by", ""), {})
+            enriched_picks.append({
+                **pick,
+                "player_name": name,
+                "manager": owner.get("display_name") or owner.get("username", "Unknown"),
+                "position": meta.get("position", ""),
+            })
+
+        total_rosters = draft.get("settings", {}).get("teams") or len(slot_by_user) or 12
+        rounds = draft.get("settings", {}).get("rounds") or 16
+        total_picks = total_rosters * rounds
+        completed = len([p for p in picks if p.get("player_id")])
+
+        my_slot = slot_by_user.get(my_user_id or "", None)
+        on_clock = _pick_on_clock(picks, slot_by_user, user_map, total_rosters)
+
+        return {
+            "draft_id": draft_id,
+            "status": draft.get("status") or draft_meta.get("status"),
+            "type": draft.get("type") or draft_meta.get("type"),
+            "draft_order": slot_by_user,
+            "my_slot": my_slot,
+            "my_user_id": my_user_id,
+            "picks": enriched_picks,
+            "total_picks": total_picks,
+            "completed_picks": completed,
+            "on_clock": on_clock,
+            "user_map": user_map,
+        }
+
     def get_league_snapshot(self, my_user_id: str | None = None) -> dict:
         """Full league state for analysis."""
         league = self.get_league()
@@ -83,9 +143,9 @@ class SleeperClient:
         users = self.get_users()
         players = self.get_all_players()
         trending = self.get_trending_players()
+        draft_state = self.get_draft_state(my_user_id)
 
         user_map = {u["user_id"]: u for u in users}
-        roster_map = {r["roster_id"]: r for r in rosters}
 
         teams = []
         for roster in rosters:
@@ -133,6 +193,7 @@ class SleeperClient:
             "teams": teams,
             "trending": trending,
             "my_user_id": my_user_id,
+            "draft": draft_state,
         }
 
     def close(self) -> None:
@@ -143,3 +204,32 @@ class SleeperClient:
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+
+def _pick_on_clock(
+    picks: list[dict],
+    slot_by_user: dict[str, int],
+    user_map: dict[str, dict],
+    teams: int,
+) -> dict | None:
+    """Determine who is on the clock for snake drafts."""
+    if not slot_by_user:
+        return None
+
+    pick_no = len(picks) + 1
+    round_no = (pick_no - 1) // teams + 1
+    pos_in_round = (pick_no - 1) % teams
+    slot = pos_in_round + 1 if round_no % 2 == 1 else teams - pos_in_round
+
+    user_id = next((uid for uid, s in slot_by_user.items() if s == slot), None)
+    if not user_id:
+        return {"pick_no": pick_no, "round": round_no, "slot": slot}
+
+    owner = user_map.get(user_id, {})
+    return {
+        "pick_no": pick_no,
+        "round": round_no,
+        "slot": slot,
+        "user_id": user_id,
+        "manager": owner.get("display_name") or owner.get("username", "Unknown"),
+    }

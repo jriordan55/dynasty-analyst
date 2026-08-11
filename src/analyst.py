@@ -14,6 +14,13 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
+from src.draft import (
+    build_draft_board,
+    build_keeper_plan,
+    build_manager_profiles,
+    recommend_picks,
+    sync_keepers_from_draft,
+)
 from src.news import FantasyNewsClient, get_news_client
 from src.sleeper import SleeperClient
 
@@ -155,6 +162,63 @@ class DynastyAnalyst:
             snapshot, my_team, self.adp_map,
             snapshot.get("trending", {}), my_needs,
         )
+
+    def draft_state(self) -> dict | None:
+        snapshot = self._ensure_snapshot()
+        return snapshot.get("draft")
+
+    def refresh_draft(self) -> dict | None:
+        league_id = self.config["league_id"]
+        with SleeperClient(league_id) as sleeper:
+            user = sleeper.resolve_user(username=self.config.get("username"))
+            my_id = user["user_id"] if user else None
+            draft = sleeper.get_draft_state(my_id)
+        self._ensure_snapshot()
+        if self._snapshot is not None:
+            self._snapshot["draft"] = draft
+            cache = ROOT / "data" / "cache" / "league_snapshot.json"
+            cached = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else dict(self._snapshot)
+            cached["draft"] = draft
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(cached, indent=2), encoding="utf-8")
+        return draft
+
+    def get_keepers(self) -> list[str]:
+        configured = self.config.get("keepers") or []
+        if configured:
+            return configured
+        _, my_team = self._ensure_loaded()
+        draft = self.draft_state()
+        if not draft:
+            draft = self.refresh_draft()
+        return sync_keepers_from_draft(my_team, draft)
+
+    def keeper_plan(self, keeper_names: list[str] | None = None):
+        _, my_team = self._ensure_loaded()
+        names = keeper_names if keeper_names is not None else self.get_keepers()
+        return build_keeper_plan(my_team, names, self.adp_map, self.config, self.draft_state())
+
+    def draft_board(self, keeper_names: list[str] | None = None, limit: int = 75) -> list:
+        snapshot = self._ensure_snapshot()
+        names = keeper_names if keeper_names is not None else self.get_keepers()
+        news: list[dict] = []
+        injuries: list[dict] = []
+        try:
+            news = self.news.get_news(limit=60)
+            injuries = self.news.get_injuries()
+        except Exception:
+            pass
+        return build_draft_board(
+            self.adp_map, snapshot, self.config, names, news, injuries, limit=limit,
+        )
+
+    def pick_recommendations(self, keeper_names: list[str] | None = None, limit: int = 5) -> list:
+        board = self.draft_board(keeper_names=keeper_names, limit=100)
+        return recommend_picks(board, limit=limit)
+
+    def manager_draft_profiles(self) -> list:
+        snapshot = self._ensure_snapshot()
+        return build_manager_profiles(snapshot, self.config)
 
     def build_context(self) -> str:
         """Build rich context for AI chat (Claude, Cursor, etc.)."""
