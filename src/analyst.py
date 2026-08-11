@@ -14,7 +14,7 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
-from src.news import FantasyNewsClient
+from src.news import FantasyNewsClient, get_news_client
 from src.sleeper import SleeperClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +57,7 @@ class DynastyAnalyst:
     def __init__(self, config: dict | None = None):
         self.config = config or load_config()
         self.adp_map = load_adp()
-        self.news = FantasyNewsClient()
+        self.news = get_news_client()
         self._snapshot: dict | None = None
         self._my_team: dict | None = None
 

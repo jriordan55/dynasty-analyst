@@ -274,9 +274,9 @@ def ask(question: str = typer.Argument(..., help="Your question for the AI analy
 @app.command()
 def news():
     """Live fantasy news from Rotowire, Underdog NFL, and ESPN."""
-    from src.news import FantasyNewsClient
+    from src.news import get_news_client
 
-    client = FantasyNewsClient()
+    client = get_news_client()
     try:
         by_source = client.get_news_by_source()
     finally:

@@ -383,4 +383,17 @@ class FantasyNewsClient:
 # Single class — do not use a separate EspnNewsClient (breaks Streamlit deploys)
 EspnNewsClient = FantasyNewsClient
 
-__all__ = ["FantasyNewsClient", "EspnNewsClient"]
+__all__ = ["FantasyNewsClient", "EspnNewsClient", "get_news_client"]
+
+
+def get_news_client() -> FantasyNewsClient:
+    """Return a news client, reloading the module if Streamlit left a stale import."""
+    import importlib
+    import sys
+
+    mod = sys.modules.get(__name__)
+    if mod is None or not hasattr(mod, "FantasyNewsClient"):
+        mod = importlib.import_module(__name__)
+        if not hasattr(mod, "FantasyNewsClient"):
+            mod = importlib.reload(mod)
+    return mod.FantasyNewsClient()
