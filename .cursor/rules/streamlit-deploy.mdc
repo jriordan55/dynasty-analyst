@@ -1,0 +1,38 @@
+---
+description: Push all project changes to GitHub so Streamlit Cloud auto-redeploys
+alwaysApply: true
+---
+
+# Streamlit Cloud deploy workflow
+
+This project is live at **Streamlit Cloud**, connected to `jriordan55/dynasty-analyst` on GitHub (`main` branch, entry file `app.py`).
+
+## After every code change
+
+When you modify anything in this repo (app, src, config examples, requirements, etc.):
+
+1. **Commit** with a clear message
+2. **Push** to `origin main`:
+   ```powershell
+   git add <changed files>
+   git commit -m "..."
+   git push origin main
+   ```
+3. Streamlit Cloud redeploys automatically from GitHub — no manual step on share.streamlit.io
+
+Do **not** skip the push. The user's phone app only updates after GitHub receives the commit.
+
+## What triggers a redeploy
+
+- Changes to `app.py`, `src/**`, `requirements.txt`, `.streamlit/config.toml`
+- Do not commit secrets: `config/league.json`, `.env`, `data/cache/`
+
+## Local-only files (never push)
+
+- `config/league.json` — user's league credentials
+- `.env`
+- `data/cache/`
+
+## If push fails
+
+Retry `git push origin main`. Tell the user if auth or network blocks the push.
