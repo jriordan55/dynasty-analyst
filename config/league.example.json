@@ -1,0 +1,22 @@
+{
+  "platform": "sleeper",
+  "league_id": "YOUR_LEAGUE_ID",
+  "username": "YOUR_SLEEPER_USERNAME",
+  "team_name": "My Dynasty Team",
+  "scoring": "ppr",
+  "format": "dynasty",
+  "starters": {
+    "QB": 1,
+    "RB": 2,
+    "WR": 2,
+    "TE": 1,
+    "FLEX": 2,
+    "SUPERFLEX": 0
+  },
+  "bench_spots": 15,
+  "notes": {
+    "contending": true,
+    "rebuild": false,
+    "target_positions": []
+  }
+}
