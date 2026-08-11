@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config" / "league.json"
 EXAMPLE_PATH = ROOT / "config" / "league.example.json"
 
+POS_COLORS = {"QB": "#3b82f6", "RB": "#22c55e", "WR": "#a855f7", "TE": "#f59e0b"}
+
 
 def save_config(config: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +41,21 @@ def _cell(value, fallback: str = "—") -> str:
     if value is None or value == "":
         return fallback
     return str(value)
+
+
+def _truncate(text: str, max_len: int = 100) -> str:
+    text = (text or "").strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rsplit(" ", 1)[0] + "…"
+
+
+def _first_sentence(text: str) -> str:
+    """Pull the first readable chunk from a reason string."""
+    for sep in (" · ", "; ", " — "):
+        if sep in text:
+            return text.split(sep)[0].strip()
+    return _truncate(text, 80)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -72,9 +89,92 @@ def load_grades(config_json: str) -> list[dict]:
         analyst.news.close()
 
 
-def _safe_dataframe(df: pd.DataFrame) -> None:
-    """Render table without pyarrow mixed-type crashes."""
-    st.dataframe(df.astype(str), width="stretch", hide_index=True)
+def _inject_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stMetric"] {
+            background: #1a1d24;
+            padding: 0.65rem 0.85rem;
+            border-radius: 0.5rem;
+            border: 1px solid #2d3139;
+        }
+        .pos-pill {
+            display: inline-block;
+            padding: 0.1rem 0.45rem;
+            border-radius: 0.35rem;
+            font-size: 0.72rem;
+            font-weight: 700;
+            color: #fff;
+            margin-right: 0.35rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _pos_badge(position: str) -> str:
+    color = POS_COLORS.get(position, "#64748b")
+    return f'<span class="pos-pill" style="background:{color}">{position}</span>'
+
+
+def _safe_dataframe(df: pd.DataFrame, height: int | None = None) -> None:
+    kwargs = {"width": "stretch", "hide_index": True}
+    if height:
+        kwargs["height"] = height
+    st.dataframe(df.astype(str), **kwargs)
+
+
+def _render_pick_cards(recs, *, highlight_first: bool = False) -> None:
+    if not recs:
+        st.info("No recommendations yet — sync your league and check keepers.")
+        return
+    for i, r in enumerate(recs, 1):
+        border = "#1DB954" if highlight_first and i == 1 else None
+        with st.container(border=True):
+            if border:
+                st.markdown(
+                    f"**#{i} {r.player}** {_pos_badge(r.position)}",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"**{i}. {r.player}** {_pos_badge(r.position)}",
+                    unsafe_allow_html=True,
+                )
+            m1, m2, m3 = st.columns(3)
+            m1.metric("ADP", _cell(r.adp))
+            m2.metric("Fit", f"{r.fit_score:.0f}")
+            m3.metric("Upside", f"{r.upside_score:.0f}" if r.upside_score else "—")
+            st.caption(_truncate(r.reason, 130))
+
+
+def _render_upside_cards(targets, limit: int = 6) -> None:
+    if not targets:
+        st.info("No high-upside targets in the pool right now.")
+        return
+    cols = st.columns(2)
+    for idx, u in enumerate(targets[:limit]):
+        with cols[idx % 2]:
+            with st.container(border=True):
+                st.markdown(
+                    f"**{u.player}** {_pos_badge(u.position)}",
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"ADP {_cell(u.adp)} · Upside **{u.upside_score:.0f}**")
+                st.caption(_truncate(u.insight, 90))
+
+
+def _board_insight(entry) -> str:
+    parts = []
+    if entry.upside_note:
+        parts.append(_first_sentence(entry.upside_note))
+    elif entry.fit_reason:
+        parts.append(_first_sentence(entry.fit_reason))
+    if entry.news_flag and entry.news_flag != "—":
+        parts.append(entry.news_flag.split(" · ")[0])
+    return " · ".join(parts) if parts else "—"
 
 
 def _roster_player_names(analyst: DynastyAnalyst) -> set[str]:
@@ -121,7 +221,7 @@ def _build_news_table(by_source: dict, roster_names: set[str]) -> pd.DataFrame:
                 "Your Player": ", ".join(players) if players else "—",
                 "Source": label,
                 "Headline": item.get("headline", ""),
-                "Summary": summary[:180] if summary else "—",
+                "Summary": summary[:140] if summary else "—",
                 "Link": item.get("link", ""),
                 "_roster_hit": bool(players),
                 "_sort_ts": item.get("sort_ts", 0),
@@ -145,7 +245,7 @@ def _build_injury_table(injuries: list[dict], roster_names: set[str]) -> pd.Data
             "Team": inj.get("team", ""),
             "Pos": inj.get("position", ""),
             "Status": inj.get("status", ""),
-            "Detail": inj.get("detail", "") or "—",
+            "Detail": _truncate(inj.get("detail", "") or "—", 60),
             "_roster_hit": on_roster,
         })
     rows.sort(key=lambda r: (not r["_roster_hit"], r["Player"]))
@@ -156,7 +256,6 @@ def _build_injury_table(injuries: list[dict], roster_names: set[str]) -> pd.Data
 
 
 def _highlight_roster_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """Return a Styler that highlights rows mentioning your roster players."""
     if df.empty or "Your Player" not in df.columns:
         return df.style
 
@@ -168,7 +267,7 @@ def _highlight_roster_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.style.apply(_style_row, axis=1)
 
 
-def _render_news_table(df: pd.DataFrame) -> None:
+def _render_news_table(df: pd.DataFrame, height: int = 360) -> None:
     if df.empty:
         st.info("No headlines loaded right now.")
         return
@@ -180,72 +279,94 @@ def _render_news_table(df: pd.DataFrame) -> None:
         styled,
         width="stretch",
         hide_index=True,
+        height=height,
         column_config=link_cfg,
     )
 
+
+def _draft_context(analyst: DynastyAnalyst, config: dict) -> dict:
+    """Shared draft state used across Home and Draft tabs."""
+    draft = analyst.draft_state()
+    keepers = config.get("keepers") or analyst.get_keepers()
+    my_slot = (draft or {}).get("my_slot")
+    teams = (draft or {}).get("teams") or len((draft or {}).get("draft_order") or {}) or 12
+    recs, next_picks, target_pick = analyst.pick_recommendations(
+        keeper_names=keepers, limit=5, draft=draft, my_slot=my_slot,
+    )
+    upside = analyst.upside_targets(keeper_names=keepers, limit=12)
+    plan = analyst.keeper_plan(keepers)
+    return {
+        "draft": draft,
+        "keepers": keepers,
+        "my_slot": my_slot,
+        "teams": teams,
+        "recs": recs,
+        "next_picks": next_picks,
+        "target_pick": target_pick,
+        "upside": upside,
+        "plan": plan,
+    }
+
+
+# ── Page setup ──────────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Dynasty Analyst",
     page_icon="🏈",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
-
-st.title("Dynasty Fantasy Football Analyst")
-st.caption("Sleeper · 4for4 + Sleeper ADP · ESPN injuries · depth charts · trending adds · live news")
+_inject_styles()
 
 with st.sidebar:
-    st.header("League Setup")
+    st.markdown("### 🏈 Dynasty Analyst")
     config = get_config()
 
-    league_id = st.text_input(
-        "Sleeper League ID",
-        value=config.get("league_id", "") if config.get("league_id") != "YOUR_LEAGUE_ID" else "",
-        help="From your league URL: sleeper.app/leagues/1234567890",
-    )
-    username = st.text_input(
-        "Your Sleeper username",
-        value=config.get("username", ""),
-        help="Your display name in the league",
-    )
-    league_name = st.text_input("League name (optional)", value=config.get("league_name", ""))
+    with st.expander("League settings", expanded=not config.get("league_id")):
+        league_id = st.text_input(
+            "Sleeper League ID",
+            value=config.get("league_id", "") if config.get("league_id") != "YOUR_LEAGUE_ID" else "",
+            help="From your league URL: sleeper.app/leagues/1234567890",
+        )
+        username = st.text_input(
+            "Your Sleeper username",
+            value=config.get("username", ""),
+        )
+        league_name = st.text_input("League name (optional)", value=config.get("league_name", ""))
 
-    if st.button("Save & Sync", type="primary", use_container_width=True):
-        if not league_id or not username:
-            st.error("Enter league ID and username.")
-        else:
-            updated = {**config, "league_id": league_id.strip(), "username": username.strip()}
-            if league_name:
-                updated["league_name"] = league_name.strip()
-            save_config(updated)
-            try:
-                with st.spinner("Syncing from Sleeper..."):
-                    analyst = DynastyAnalyst(updated)
-                    analyst.sync()
-                    analyst.news.close()
-                load_grades.clear()
-                st.success("League synced!")
-                st.rerun()
-            except Exception as e:
-                st.error(str(e))
+        if st.button("Save & Sync", type="primary", use_container_width=True):
+            if not league_id or not username:
+                st.error("Enter league ID and username.")
+            else:
+                updated = {**config, "league_id": league_id.strip(), "username": username.strip()}
+                if league_name:
+                    updated["league_name"] = league_name.strip()
+                save_config(updated)
+                try:
+                    with st.spinner("Syncing from Sleeper..."):
+                        analyst = DynastyAnalyst(updated)
+                        analyst.sync()
+                        analyst.news.close()
+                    load_grades.clear()
+                    load_live_draft.clear()
+                    st.success("League synced!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(str(e))
 
-    if st.button("Refresh league data", use_container_width=True):
+    if st.button("Refresh all data", use_container_width=True):
         try:
-            with st.spinner("Refreshing from Sleeper..."):
+            with st.spinner("Refreshing..."):
                 analyst = DynastyAnalyst(get_config())
                 analyst.sync()
+                analyst.refresh_draft()
                 analyst.news.close()
             load_grades.clear()
-            st.success("League data refreshed.")
+            load_live_draft.clear()
+            st.success("Data refreshed.")
             st.rerun()
         except Exception as e:
             st.error(str(e))
-
-    st.divider()
-    st.markdown("**Quick links**")
-    st.markdown("- [Find league ID on Sleeper](https://sleeper.app)")
-    st.markdown("- [4for4 ADP rankings](https://www.4for4.com/adp)")
-    st.markdown("- [@RotoWireNFL on X](https://x.com/RotoWireNFL)")
-    st.markdown("- [@UnderdogNFL on X](https://x.com/UnderdogNFL)")
 
 config = get_config()
 if (
@@ -253,15 +374,16 @@ if (
     or config.get("league_id") == "YOUR_LEAGUE_ID"
     or not config.get("username")
 ):
-    st.info("Enter your Sleeper league ID and username in the sidebar, then click **Save & Sync**.")
+    st.title("Dynasty Fantasy Football Analyst")
+    st.info("Open **League settings** in the sidebar, enter your Sleeper league ID and username, then click **Save & Sync**.")
     st.markdown(
         """
-        ### What you get
-        - **League map** — who is desperate at RB, overloaded at WR, etc.
-        - **Roster grades** — your players vs ADP + live news
-        - **Sell alerts** — aging RBs before the value cliff
-        - **Trade targets** — specific managers who need what you have
-        - **Waiver picks** — tailored to your roster holes
+        **What you'll get**
+        - A **Home** dashboard with your next picks and breakout targets
+        - **Draft** prep tailored to your snake slot
+        - **My Team** keepers, grades, and sell alerts
+        - **League** map and trade targets
+        - **News** and waivers in one place
         """
     )
     st.stop()
@@ -273,368 +395,374 @@ try:
         analyst.refresh_draft()
 except Exception as e:
     st.error(f"Could not load league: {e}")
-    st.info("Click **Save & Sync** in the sidebar to connect your Sleeper league.")
+    st.info("Open **League settings** and click **Save & Sync**.")
     st.stop()
 
-tab_overview, tab_keepers, tab_draft, tab_live, tab_grades, tab_sell, tab_trades, tab_waivers, tab_news = st.tabs(
-    [
-        "League Map",
-        "Keepers",
-        "Draft Board",
-        "Live Draft",
-        "My Grades",
-        "Sell Alerts",
-        "Trade Targets",
-        "Waivers",
-        "Fantasy News",
-    ]
+overview = analyst.league_overview()
+ctx = _draft_context(analyst, config)
+draft = ctx["draft"]
+teams = ctx["teams"]
+my_slot = ctx["my_slot"]
+
+with st.sidebar:
+    st.divider()
+    st.caption("Connected")
+    st.markdown(f"**{overview.get('my_team') or 'My Team'}**")
+    if overview.get("record"):
+        st.caption(f"Record {overview['record']}")
+    if my_slot:
+        st.caption(f"Draft slot **{my_slot}**")
+    if ctx["target_pick"]:
+        st.caption(f"Next pick: **{format_pick_label(ctx['target_pick'], teams)}**")
+    if ctx["plan"].remaining_needs:
+        st.caption(f"Needs: {', '.join(ctx['plan'].remaining_needs[:3])}")
+
+st.title(overview.get("my_team") or "Dynasty Analyst")
+st.caption(config.get("league_name") or "Sleeper league · synced")
+
+tab_home, tab_draft, tab_team, tab_league, tab_news = st.tabs(
+    ["Home", "Draft", "My Team", "League", "News"]
 )
 
-with tab_overview:
+# ── Home ──────────────────────────────────────────────────────────────────────
+
+with tab_home:
     try:
-        data = analyst.league_overview()
-        st.subheader("Manager profiles — trade leverage")
-        rows = []
-        for t in data["all_teams"]:
-            c = t["counts"]
-            rows.append({
-                "Manager": t["manager"],
-                "Team": t["team"],
-                "QB": c.get("QB", 0),
-                "RB": c.get("RB", 0),
-                "WR": c.get("WR", 0),
-                "TE": c.get("TE", 0),
-                "Desperate For": ", ".join(t["desperate_for"]) or "—",
-                "Overloaded": ", ".join(t["overloaded_at"]) or "—",
-            })
-        _safe_dataframe(pd.DataFrame(rows))
-
-        my = data.get("my_needs")
-        if my:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Your Team", data["my_team"])
-            c2.metric("Desperate For", ", ".join(my.desperate_for) or "None")
-            c3.metric("Surplus", ", ".join(f"{k} (+{v})" for k, v in my.surplus.items()) or "None")
-
-        st.subheader("Manager draft tendencies")
-        st.caption("Predictions based on roster build, keeper positions, and draft slot.")
-        profiles = analyst.manager_draft_profiles()
-        prof_df = pd.DataFrame([{
-            "Slot": _cell(p.draft_slot),
-            "Manager": p.manager,
-            "Team": p.team,
-            "RB": p.rb_count,
-            "WR": p.wr_count,
-            "QB": p.qb_count,
-            "TE": p.te_count,
-            "Tendency": p.tendency,
-            "Keepers": ", ".join(p.keeper_positions) or "—",
-            "Draft Prediction": p.draft_prediction,
-        } for p in profiles])
-        _safe_dataframe(prof_df)
-    except Exception as e:
-        st.error(f"League map failed: {e}")
-
-with tab_keepers:
-    try:
-        _, my_team = analyst._ensure_loaded()
-        skill_players = sorted(
-            p["name"] for p in my_team.get("players", [])
-            if p.get("position") in {"QB", "RB", "WR", "TE"}
+        my = overview.get("my_needs")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Draft slot", my_slot or "—")
+        c2.metric(
+            "Next pick",
+            format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
         )
-        max_keepers = int(config.get("max_keepers", 4))
-        synced = analyst.get_keepers()
-        default_keepers = [k for k in synced if k in skill_players]
+        c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
+        c4.metric("Keepers", f"{len(ctx['keepers'])}/{ctx['plan'].max_keepers}")
 
-        c1, c2 = st.columns([3, 1])
-        with c2:
-            if st.button("Sync from Sleeper"):
-                draft = analyst.refresh_draft()
-                if draft:
-                    load_live_draft.clear()
-                    synced = analyst.get_keepers()
-                    st.rerun()
-        with c1:
+        if ctx["keepers"]:
+            st.markdown("**Keepers:** " + " · ".join(f"`{k}`" for k in ctx["keepers"]))
+
+        st.divider()
+        left, right = st.columns([3, 2])
+
+        with left:
+            if ctx["target_pick"]:
+                st.subheader(f"Best at {format_pick_label(ctx['target_pick'], teams)}")
+            else:
+                st.subheader("Top picks for your build")
+            if ctx["next_picks"]:
+                upcoming = " → ".join(p.split(" (")[0] for p in [format_pick_label(p, teams) for p in ctx["next_picks"][:3]])
+                st.caption(f"Upcoming: {upcoming}")
+            _render_pick_cards(ctx["recs"][:3])
+
+        with right:
+            st.subheader("Breakout watch")
+            _render_upside_cards(ctx["upside"], limit=4)
+
+        sells = analyst.sell_candidates()
+        if sells:
+            st.divider()
+            st.subheader("Action items")
+            for s in sells[:3]:
+                icon = {"high": "🔴", "medium": "🟡", "low": "⚪"}.get(s.urgency, "")
+                st.markdown(f"{icon} Consider selling **{s.player}** — {_truncate(s.reason, 80)}")
+    except Exception as e:
+        st.error(f"Home failed: {e}")
+
+# ── Draft ─────────────────────────────────────────────────────────────────────
+
+with tab_draft:
+    try:
+        view = st.radio(
+            "Show",
+            ["My picks", "Upside targets", "All players", "Live draft"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        keepers = ctx["keepers"]
+
+        if view == "My picks":
+            st.subheader("Pick recommendations")
+            st.caption("Ranked for your roster holes, ADP window at your next snake pick, and upside.")
+            if my_slot and ctx["next_picks"]:
+                st.info(
+                    f"Slot **{my_slot}** · Next picks: "
+                    + " · ".join(format_pick_label(p, teams) for p in ctx["next_picks"][:4])
+                )
+            _render_pick_cards(ctx["recs"], highlight_first=True)
+
+        elif view == "Upside targets":
+            st.subheader("High upside & bigger roles")
+            st.caption("Youth, depth-chart climb, trending adds, and role-change news.")
+            _render_upside_cards(ctx["upside"], limit=12)
+            with st.expander("Full upside table"):
+                udf = pd.DataFrame([{
+                    "Player": u.player,
+                    "Pos": u.position,
+                    "ADP": _cell(u.adp),
+                    "Upside": u.upside_score,
+                    "Insight": _truncate(u.insight, 100),
+                } for u in ctx["upside"]])
+                _safe_dataframe(udf, height=400)
+
+        elif view == "All players":
+            pos_filter = st.selectbox("Position", ["All", "QB", "RB", "WR", "TE"], label_visibility="collapsed")
+            board = analyst.draft_board(keeper_names=keepers, limit=100)
+            if pos_filter != "All":
+                board = [b for b in board if b.position == pos_filter]
+
+            st.caption("Sorted by roster fit. Green rows = strong fit (75+).")
+            if not board:
+                st.info("No available players — sync draft or check keepers.")
+            else:
+                bdf = pd.DataFrame([{
+                    "Player": b.player,
+                    "Pos": b.position,
+                    "ADP": _cell(b.adp),
+                    "Fit": b.fit_score,
+                    "Upside": b.upside_score or "—",
+                    "Insight": _board_insight(b),
+                } for b in board[:50]])
+                styled = bdf.style.apply(
+                    lambda row: (
+                        ["background-color: #1a4d2e; color: #ecfdf5"] * len(row)
+                        if float(row["Fit"]) >= 75 else [""] * len(row)
+                    ),
+                    axis=1,
+                )
+                st.dataframe(styled, width="stretch", hide_index=True, height=480)
+
+        else:
+            if st.button("Refresh live draft"):
+                load_live_draft.clear()
+                analyst.refresh_draft()
+                st.rerun()
+
+            live = load_live_draft(config["league_id"], config["username"])
+            if not live:
+                st.info("No Sleeper draft found yet.")
+            else:
+                on_clock = live.get("on_clock") or {}
+                my_user_id = analyst._ensure_snapshot().get("my_user_id") or live.get("my_user_id")
+                is_my_pick = on_clock.get("user_id") == my_user_id
+                live_teams = live.get("teams") or teams
+
+                s1, s2, s3 = st.columns(3)
+                s1.metric("Status", live.get("status", "—"))
+                s2.metric("Progress", f"{live.get('completed_picks', 0)}/{live.get('total_picks', '?')}")
+                s3.metric("Your slot", live.get("my_slot") or "—")
+
+                if on_clock:
+                    if is_my_pick:
+                        st.success(f"You're on the clock — Pick {on_clock.get('pick_no')} (Rd {on_clock.get('round')})")
+                    else:
+                        st.info(f"On clock: **{on_clock.get('manager')}** · Pick {on_clock.get('pick_no')}")
+
+                live_recs, live_next, live_target = analyst.pick_recommendations(
+                    keeper_names=keepers,
+                    limit=5,
+                    draft=live,
+                    my_slot=live.get("my_slot"),
+                    on_clock=is_my_pick,
+                )
+                if is_my_pick:
+                    st.subheader("Pick now")
+                    _render_pick_cards(live_recs, highlight_first=True)
+                else:
+                    label = format_pick_label(live_target, live_teams) if live_target else "your next pick"
+                    st.subheader(f"Queue for {label}")
+                    _render_pick_cards(live_recs[:4])
+
+                picks = live.get("picks", [])
+                if picks:
+                    with st.expander("Recent picks", expanded=False):
+                        pdf = pd.DataFrame([{
+                            "Pick": p.get("pick_no"),
+                            "Rd": p.get("round"),
+                            "Manager": p.get("manager"),
+                            "Player": p.get("player_name"),
+                            "Pos": p.get("position"),
+                        } for p in reversed(picks[-24:])])
+                        _safe_dataframe(pdf, height=320)
+    except Exception as e:
+        st.error(f"Draft failed: {e}")
+
+# ── My Team ───────────────────────────────────────────────────────────────────
+
+with tab_team:
+    try:
+        section = st.radio(
+            "Section",
+            ["Keepers", "Roster grades", "Sell alerts"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        if section == "Keepers":
+            _, my_team = analyst._ensure_loaded()
+            skill_players = sorted(
+                p["name"] for p in my_team.get("players", [])
+                if p.get("position") in {"QB", "RB", "WR", "TE"}
+            )
+            max_keepers = int(config.get("max_keepers", 4))
+            default_keepers = [k for k in ctx["keepers"] if k in skill_players]
+
             selected = st.multiselect(
-                f"Your keepers (max {max_keepers})",
+                f"Select keepers (max {max_keepers})",
                 skill_players,
                 default=default_keepers,
                 max_selections=max_keepers,
             )
+            if st.button("Save keepers", type="primary"):
+                updated = {**config, "keepers": selected}
+                save_config(updated)
+                st.success("Keepers saved.")
+                st.rerun()
 
-        if st.button("Save keepers", type="primary"):
-            updated = {**config, "keepers": selected}
-            save_config(updated)
-            config.update(updated)
-            st.success("Keepers saved.")
+            plan = analyst.keeper_plan(selected)
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Locked", f"{len(plan.keepers)}/{plan.max_keepers}")
+            m2.metric("Draft needs", ", ".join(plan.remaining_needs[:2]) or "Balanced")
+            m3.metric("Priorities", ", ".join(plan.draft_priorities[:2]) or "—")
 
-        plan = analyst.keeper_plan(selected)
-        st.subheader("Post-keeper roster outlook")
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Keepers locked", f"{len(plan.keepers)}/{plan.max_keepers}")
-        m2.metric("Top draft needs", ", ".join(plan.remaining_needs[:3]) or "Balanced")
-        m3.metric("Draft priorities", ", ".join(plan.draft_priorities[:3]))
-
-        if plan.keepers:
-            kdf = pd.DataFrame([{
-                "Player": k["name"],
-                "Pos": k["position"],
-                "ADP": _cell(k["adp"]),
-                "Keeper Round": _cell(k.get("keeper_round")),
-            } for k in plan.keepers])
-            _safe_dataframe(kdf)
-
-        counts = plan.post_keeper_counts
-        st.markdown(
-            f"**After keepers:** QB {counts.get('QB', 0)} · "
-            f"RB {counts.get('RB', 0)} · WR {counts.get('WR', 0)} · TE {counts.get('TE', 0)}"
-        )
-    except Exception as e:
-        st.error(f"Keepers failed: {e}")
-
-with tab_draft:
-    try:
-        keepers = config.get("keepers") or analyst.get_keepers()
-        pos_filter = st.selectbox("Filter by position", ["All", "QB", "RB", "WR", "TE"])
-        board = analyst.draft_board(keeper_names=keepers, limit=100)
-        if pos_filter != "All":
-            board = [b for b in board if b.position == pos_filter]
-
-        st.subheader("Available players — ranked by roster fit")
-        st.caption("Fit score uses blended ADP (4for4 + Sleeper), VOR, injuries, depth chart, trending, and positional runs.")
-        if not board:
-            st.info("No available players found. Sync draft or check keepers.")
-        else:
-            bdf = pd.DataFrame([{
-                "Player": b.player,
-                "Pos": b.position,
-                "ADP": _cell(b.adp),
-                "Tier": b.tier,
-                "Fit": b.fit_score,
-                "Upside": b.upside_score,
-                "Why": b.fit_reason,
-                "Role/Breakout": b.upside_note or "—",
-                "News/Injury": b.news_flag or "—",
-                "Team": b.team or "—",
-            } for b in board[:60]])
-            styled = bdf.style.apply(
-                lambda row: (
-                    ["background-color: #1a4d2e; color: #ecfdf5"] * len(row)
-                    if float(row["Fit"]) >= 75 else [""] * len(row)
-                ),
-                axis=1,
+            counts = plan.post_keeper_counts
+            st.caption(
+                f"After keepers — QB {counts.get('QB', 0)} · RB {counts.get('RB', 0)} · "
+                f"WR {counts.get('WR', 0)} · TE {counts.get('TE', 0)}"
             )
-            st.dataframe(styled, width="stretch", hide_index=True)
+            if plan.keepers:
+                kdf = pd.DataFrame([{
+                    "Player": k["name"],
+                    "Pos": k["position"],
+                    "ADP": _cell(k["adp"]),
+                    "Round": _cell(k.get("keeper_round")),
+                } for k in plan.keepers])
+                _safe_dataframe(kdf)
 
-        upside = analyst.upside_targets(keeper_names=keepers, limit=20)
-        st.subheader("High upside & bigger roles")
-        st.caption("Players with path to expanded usage — depth chart climb, trending adds, role-change news, youth.")
-        if upside:
-            udf = pd.DataFrame([{
-                "Player": u.player,
-                "Pos": u.position,
-                "ADP": _cell(u.adp),
-                "Upside": u.upside_score,
-                "Insight": u.insight,
-                "Team": u.team or "—",
-            } for u in upside])
-            styled_u = udf.style.apply(
-                lambda row: (
-                    ["background-color: #312e81; color: #eef2ff"] * len(row)
-                    if float(row["Upside"]) >= 50 else [""] * len(row)
-                ),
-                axis=1,
-            )
-            st.dataframe(styled_u, width="stretch", hide_index=True)
+        elif section == "Roster grades":
+            grades = load_grades(json.dumps(config, sort_keys=True))
+            df = pd.DataFrame([{
+                "Player": g["name"],
+                "Pos": g["position"],
+                "ADP": _cell(g["adp"]),
+                "Age": _cell(g["age"]),
+                "Grade": g["grade"],
+                "Notes": _truncate("; ".join(g["notes"]), 80),
+            } for g in grades])
+            _safe_dataframe(df, height=480)
+
         else:
-            st.info("No high-upside targets found in the current pool.")
-
-        draft = analyst.draft_state()
-        my_slot = (draft or {}).get("my_slot")
-        teams = (draft or {}).get("teams") or len((draft or {}).get("draft_order") or {}) or 12
-        recs, next_picks, target_pick = analyst.pick_recommendations(
-            keeper_names=keepers, limit=5, draft=draft, my_slot=my_slot,
-        )
-        if my_slot and target_pick:
-            st.subheader(f"Best picks for {format_pick_label(target_pick, teams)}")
-            if len(next_picks) > 1:
-                upcoming = ", ".join(format_pick_label(p, teams) for p in next_picks[:4])
-                st.caption(f"Your slot **{my_slot}** · Upcoming picks: {upcoming}")
-        else:
-            st.subheader("Top 5 picks for your build")
-        for i, r in enumerate(recs, 1):
-            upside_tag = f" · Upside {r.upside_score:.0f}" if r.upside_score >= 35 else ""
-            st.markdown(
-                f"**{i}. {r.player}** ({r.position}, ADP {_cell(r.adp)}) — "
-                f"Fit {r.fit_score:.0f}{upside_tag} · {r.reason}"
-            )
-    except Exception as e:
-        st.error(f"Draft board failed: {e}")
-
-with tab_live:
-    try:
-        if st.button("Refresh live draft"):
-            load_live_draft.clear()
-            analyst.refresh_draft()
-            st.rerun()
-
-        live = load_live_draft(config["league_id"], config["username"])
-        if not live:
-            st.info("No Sleeper draft found for this league yet.")
-        else:
-            on_clock = live.get("on_clock") or {}
-            my_slot = live.get("my_slot")
-            status = live.get("status", "unknown")
-            st.caption(f"Draft status: **{status}** · Your slot: **{my_slot or '—'}** · Pick {live.get('completed_picks', 0)}/{live.get('total_picks', '?')}")
-
-            snapshot = analyst._ensure_snapshot()
-            my_user_id = snapshot.get("my_user_id") or live.get("my_user_id")
-            is_my_pick = on_clock.get("user_id") == my_user_id
-
-            if on_clock:
-                if is_my_pick:
-                    st.success(f"You're on the clock — Pick {on_clock.get('pick_no')} (Round {on_clock.get('round')})")
-                else:
-                    st.info(f"On the clock: **{on_clock.get('manager')}** — Pick {on_clock.get('pick_no')} (Round {on_clock.get('round')})")
-
-            keepers = config.get("keepers") or analyst.get_keepers()
-            recs, next_picks, target_pick = analyst.pick_recommendations(
-                keeper_names=keepers,
-                limit=5,
-                draft=live,
-                my_slot=my_slot,
-                on_clock=is_my_pick,
-            )
-            teams = live.get("teams") or len(live.get("draft_order") or {}) or 12
-
-            if my_slot and next_picks:
-                upcoming = ", ".join(format_pick_label(p, teams) for p in next_picks[:4])
-                st.caption(f"Your upcoming picks: {upcoming}")
-
-            if is_my_pick:
-                pick_label = format_pick_label(on_clock.get("pick_no") or target_pick or 0, teams)
-                st.subheader(f"Pick this now — {pick_label}")
-                for i, r in enumerate(recs, 1):
-                    upside_tag = f" · Upside {r.upside_score:.0f}" if r.upside_score >= 35 else ""
-                    st.markdown(
-                        f"### {i}. {r.player} ({r.position})\n"
-                        f"ADP {_cell(r.adp)} · Fit **{r.fit_score:.0f}**{upside_tag} — {r.reason}"
-                    )
+            sells = analyst.sell_candidates()
+            if not sells:
+                st.success("No urgent sell candidates on your roster.")
             else:
-                if target_pick:
-                    st.subheader(f"Targets for your next pick — {format_pick_label(target_pick, teams)}")
-                else:
-                    st.subheader("Best available for your team")
-                for i, r in enumerate(recs[:5], 1):
-                    st.markdown(f"**{i}. {r.player}** ({r.position}, ADP {_cell(r.adp)}) — {r.reason}")
-
-            picks = live.get("picks", [])
-            if picks:
-                st.subheader("Draft board — picks so far")
-                pdf = pd.DataFrame([{
-                    "Pick": p.get("pick_no"),
-                    "Rnd": p.get("round"),
-                    "Manager": p.get("manager"),
-                    "Player": p.get("player_name"),
-                    "Pos": p.get("position"),
-                    "Keeper": "Yes" if p.get("is_keeper") else "",
-                } for p in reversed(picks[-36:])])
-                _safe_dataframe(pdf)
+                for s in sells:
+                    icon = {"high": "🔴", "medium": "🟡", "low": "⚪"}.get(s.urgency, "")
+                    with st.container(border=True):
+                        st.markdown(f"{icon} **{s.player}** ({s.position}) · ADP {_cell(s.adp)}")
+                        st.caption(s.reason)
     except Exception as e:
-        st.error(f"Live draft failed: {e}")
+        st.error(f"My Team failed: {e}")
 
-with tab_grades:
-    try:
-        grades = load_grades(json.dumps(config, sort_keys=True))
-        df = pd.DataFrame([{
-            "Player": g["name"],
-            "Pos": g["position"],
-            "ADP": _cell(g["adp"]),
-            "Age": _cell(g["age"]),
-            "Grade": g["grade"],
-            "Notes": "; ".join(g["notes"]),
-        } for g in grades])
-        _safe_dataframe(df)
-    except Exception as e:
-        st.error(f"Roster grades failed: {e}")
+# ── League ────────────────────────────────────────────────────────────────────
 
-with tab_sell:
+with tab_league:
     try:
-        sells = analyst.sell_candidates()
-        if not sells:
-            st.success("No urgent sell candidates.")
+        section = st.radio(
+            "Section",
+            ["Manager map", "Trade targets", "Draft tendencies"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+        if section == "Manager map":
+            my = overview.get("my_needs")
+            if my:
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Desperate for", ", ".join(my.desperate_for) or "None")
+                c2.metric("Surplus", ", ".join(f"{k}+{v}" for k, v in my.surplus.items()) or "None")
+                c3.metric("Starter gaps", len([g for g in my.starter_gaps.values() if g > 0]))
+
+            rows = [{
+                "Manager": t["manager"],
+                "Desperate": ", ".join(t["desperate_for"]) or "—",
+                "Surplus": ", ".join(t["overloaded_at"]) or "—",
+                "RB": t["counts"].get("RB", 0),
+                "WR": t["counts"].get("WR", 0),
+            } for t in overview["all_teams"]]
+            _safe_dataframe(pd.DataFrame(rows), height=420)
+
+        elif section == "Trade targets":
+            matches = analyst.trade_targets()
+            if not matches:
+                st.info("No auto-matches — use the manager map to find desperate teams.")
+                st.markdown(
+                    "**Tip:** Offer from a position you're deep at to a manager who's desperate there."
+                )
+            else:
+                for t in matches[:8]:
+                    with st.container(border=True):
+                        st.markdown(f"**{t.target_manager}** · leverage {t.leverage_score:.0f}")
+                        st.markdown(f"Send **{', '.join(t.you_give)}** → Get **{', '.join(t.you_get)}**")
+                        st.caption(t.rationale)
+
         else:
-            for s in sells:
-                color = {"high": "🔴", "medium": "🟡", "low": "⚪"}.get(s.urgency, "")
-                st.warning(f"{color} **{s.player}** ({s.position}, ADP {s.adp or 'N/A'}) — {s.reason}")
+            profiles = analyst.manager_draft_profiles()
+            prof_df = pd.DataFrame([{
+                "Slot": _cell(p.draft_slot),
+                "Manager": p.manager,
+                "Tendency": p.tendency,
+                "Keepers": ", ".join(p.keeper_positions) or "—",
+                "Prediction": _truncate(p.draft_prediction, 80),
+            } for p in profiles])
+            _safe_dataframe(prof_df, height=420)
     except Exception as e:
-        st.error(f"Sell alerts failed: {e}")
+        st.error(f"League failed: {e}")
 
-with tab_trades:
-    try:
-        matches = analyst.trade_targets()
-        if not matches:
-            st.info("No automated matches — check the League Map for manual targets.")
-            st.markdown(
-                "**Tip:** Look for managers who are *desperate* at a position you're deep at. "
-                "Example: you have 6 RBs, they have 1 RB and 6 WRs → offer an RB, ask for their WR1."
-            )
-        else:
-            for t in matches[:10]:
-                with st.expander(f"{t.target_manager} — leverage {t.leverage_score:.1f}"):
-                    st.markdown(f"**Send:** {', '.join(t.you_give)}")
-                    st.markdown(f"**Get:** {', '.join(t.you_get)}")
-                    st.caption(t.rationale)
-    except Exception as e:
-        st.error(f"Trade targets failed: {e}")
-
-with tab_waivers:
-    try:
-        waivers = analyst.waiver_targets()
-        df = pd.DataFrame([{
-            "Player": w.player,
-            "Pos": w.position,
-            "ADP": _cell(w.adp),
-            "Why": w.reason,
-        } for w in waivers[:15]])
-        _safe_dataframe(df)
-    except Exception as e:
-        st.error(f"Waiver targets failed: {e}")
+# ── News ──────────────────────────────────────────────────────────────────────
 
 with tab_news:
     try:
-        by_source = load_news_feeds()
-        roster_names = _roster_player_names(analyst)
+        section = st.radio(
+            "Section",
+            ["Headlines", "Injuries", "Waivers"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
 
-        if not any(by_source.get(k) for k in ("rotowire", "underdog", "espn")):
-            st.warning("Some feeds are slow or unavailable — showing what we could load.")
-
-        roster_only = st.checkbox("Show my roster news only", value=False)
-        news_df = _build_news_table(by_source, roster_names)
-        if roster_only and not news_df.empty:
-            news_df = news_df[news_df["Your Player"] != "—"]
-
-        st.subheader("Fantasy News Feed")
-        st.caption("Green rows mention a player on your roster. Sorted with your players first.")
-        _render_news_table(news_df)
-
-        st.subheader("Injury Report")
-        injuries = by_source.get("injuries", [])
-        inj_df = _build_injury_table(injuries[:40], roster_names)
-        if inj_df.empty:
-            st.info("Injury report unavailable right now.")
+        if section == "Waivers":
+            waivers = analyst.waiver_targets()
+            df = pd.DataFrame([{
+                "Player": w.player,
+                "Pos": w.position,
+                "ADP": _cell(w.adp),
+                "Why": _truncate(w.reason, 90),
+            } for w in waivers[:15]])
+            _safe_dataframe(df, height=400)
         else:
-            _render_news_table(inj_df)
+            by_source = load_news_feeds()
+            roster_names = _roster_player_names(analyst)
 
-        if st.button("Refresh news"):
-            load_news_feeds.clear()
-            st.rerun()
+            if section == "Headlines":
+                roster_only = st.toggle("My players only", value=False)
+                news_df = _build_news_table(by_source, roster_names)
+                if roster_only and not news_df.empty:
+                    news_df = news_df[news_df["Your Player"] != "—"]
+                st.caption("Green = mentions someone on your roster.")
+                _render_news_table(news_df)
+            else:
+                inj_df = _build_injury_table(by_source.get("injuries", [])[:40], roster_names)
+                st.caption("Green = your roster.")
+                _render_news_table(inj_df)
+
+            if st.button("Refresh news"):
+                load_news_feeds.clear()
+                st.rerun()
     except Exception as e:
         st.error(f"News failed: {e}")
 
-st.divider()
-with st.expander("Export context for Claude / Cursor chat"):
-    if st.button("Generate export"):
+with st.expander("Export for AI chat"):
+    if st.button("Generate context"):
         try:
             st.code(analyst.build_context(), language="markdown")
         except Exception as e:
