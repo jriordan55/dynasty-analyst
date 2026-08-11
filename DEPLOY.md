@@ -1,5 +1,21 @@
 # Publish to GitHub
 
+## Streamlit Cloud — keep the live app updated
+
+The app on Streamlit Cloud pulls from `main` on GitHub and **redeploys automatically** after each push.
+
+After any code change:
+
+```powershell
+git add .
+git commit -m "describe the change"
+git push origin main
+```
+
+Wait ~1–2 minutes, then refresh the app on your phone. Do not commit `config/league.json` or `.env`.
+
+---
+
 Follow these steps once to get a link you can use and share.
 
 ## 1. Create the repo on GitHub
