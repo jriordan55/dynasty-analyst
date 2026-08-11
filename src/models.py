@@ -52,6 +52,98 @@ class TradeMatch:
     you_get: list[str]
     rationale: str
     leverage_score: float
+    you_give_value: float = 0.0
+    you_get_value: float = 0.0
+    value_delta: float = 0.0
+    confidence: str = ""
+    offer_picks: list[str] = field(default_factory=list)
+    receive_picks: list[str] = field(default_factory=list)
+
+
+@dataclass
+class PlayerValue:
+    name: str
+    position: str
+    dynasty_value: float
+    adp: int | None
+    grade: str
+    upside_score: float
+    vor: float
+    age: float | None
+    trend: str
+    injury: str
+    summary: str
+    tradeable: bool = True
+
+
+@dataclass
+class PositionUnit:
+    position: str
+    count: int
+    quality: str
+    starter_value: float
+    depth_value: float
+    total_value: float
+    top_player: str
+    top_value: float
+    weakest: str
+    avg_age: float
+    need_score: float
+    surplus_score: float
+    notes: str
+
+
+@dataclass
+class ManagerTendency:
+    manager: str
+    team: str
+    owner_id: str
+    trade_count: int
+    picks_traded: int
+    avg_trade_age: float
+    draft_rb_early_pct: float
+    draft_wr_early_pct: float
+    draft_youth_pct: float
+    archetype: str
+    likes: list[str]
+    notes: str
+
+
+@dataclass
+class TeamTradeProfile:
+    manager: str
+    team: str
+    owner_id: str
+    record: str
+    win_mode: str
+    units: list[PositionUnit]
+    desperate_for: list[str]
+    surplus_at: list[str]
+    tradeable_assets: list[PlayerValue]
+    targets_on_roster: list[PlayerValue]
+    draft_picks: list[str]
+    pick_values: list[tuple[str, float]]
+    tendency: ManagerTendency
+    best_match_score: float = 0.0
+
+
+@dataclass
+class TradeProposal:
+    target_manager: str
+    target_team: str
+    you_send_players: list[str]
+    you_send_picks: list[str]
+    you_receive_players: list[str]
+    you_receive_picks: list[str]
+    send_value: float
+    receive_value: float
+    value_delta: float
+    fairness: str
+    leverage_score: float
+    confidence: str
+    why_they_accept: str
+    why_you_win: str
+    risk_notes: str
 
 
 @dataclass

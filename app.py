@@ -670,52 +670,147 @@ with tab_league:
     try:
         section = st.radio(
             "Section",
-            ["Manager map", "Trade targets", "Draft tendencies"],
+            ["Trade proposals", "Team breakdown", "Manager tendencies", "Manager map"],
             horizontal=True,
             label_visibility="collapsed",
         )
 
-        if section == "Manager map":
+        profiles = analyst.team_trade_profiles()
+        proposals = analyst.trade_proposals()
+        tendencies = analyst.manager_tendencies()
+        _, my_team_data = analyst._ensure_loaded()
+        my_profile = next(
+            (p for p in profiles if p.owner_id == my_team_data.get("owner_id")), None,
+        )
+
+        if section == "Trade proposals":
+            st.caption(
+                "Value-based packages using ADP, VOR, upside, injuries, trends, "
+                "positional quality, and manager history."
+            )
+            if not proposals:
+                st.info("No strong proposals yet — sync league data or check Team breakdown for manual targets.")
+            else:
+                for p in proposals[:10]:
+                    with st.container(border=True):
+                        head = f"**{p.target_manager}** ({p.target_team})"
+                        st.markdown(f"{head} · {p.confidence} confidence · Leverage **{p.leverage_score:.0f}**")
+                        send = p.you_send_players + [f"📋 {x}" for x in p.you_send_picks]
+                        recv = p.you_receive_players + [f"📋 {x}" for x in p.you_receive_picks]
+                        c1, c2, c3 = st.columns([2, 2, 1])
+                        with c1:
+                            st.markdown("**You send**")
+                            st.markdown(" · ".join(send) if send else "—")
+                        with c2:
+                            st.markdown("**You get**")
+                            st.markdown(" · ".join(recv) if recv else "—")
+                        with c3:
+                            st.metric("Value in", f"{p.receive_value:.0f}")
+                            st.caption(f"Out {p.send_value:.0f} · Δ {p.value_delta:+.0f} · {p.fairness}")
+                        st.caption(f"**Why they bite:** {_truncate(p.why_they_accept, 120)}")
+                        st.caption(f"**Why you win:** {_truncate(p.why_you_win, 120)} · *{p.risk_notes}*")
+
+        elif section == "Team breakdown":
+            managers = [p.manager for p in profiles]
+            selected = st.selectbox("Select team", managers, label_visibility="collapsed")
+            profile = next(p for p in profiles if p.manager == selected)
+
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Record", profile.record)
+            m2.metric("Mode", profile.win_mode)
+            m3.metric("Desperate", ", ".join(profile.desperate_for) or "None")
+            m4.metric("Surplus", ", ".join(profile.surplus_at) or "None")
+
+            st.markdown(f"**Archetype:** {profile.tendency.archetype}")
+            if profile.tendency.notes:
+                st.caption(profile.tendency.notes)
+
+            st.subheader("Position units — quality & value")
+            unit_df = pd.DataFrame([{
+                "Pos": u.position,
+                "Count": u.count,
+                "Quality": u.quality,
+                "Starter Val": u.starter_value,
+                "Depth Val": u.depth_value,
+                "Top Player": u.top_player,
+                "Need": u.need_score,
+                "Surplus": u.surplus_score,
+                "Notes": _truncate(u.notes, 70),
+            } for u in profile.units])
+            _safe_dataframe(unit_df, height=220)
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.subheader("Best trade assets")
+                if profile.tradeable_assets:
+                    adf = pd.DataFrame([{
+                        "Player": v.name,
+                        "Pos": v.position,
+                        "Value": v.dynasty_value,
+                        "Grade": v.grade,
+                        "Profile": _truncate(v.summary, 60),
+                    } for v in profile.tradeable_assets[:8]])
+                    _safe_dataframe(adf, height=280)
+                else:
+                    st.caption("No clear trade chips — core is consolidated.")
+            with col_b:
+                st.subheader("Top roster targets")
+                tdf = pd.DataFrame([{
+                    "Player": v.name,
+                    "Pos": v.position,
+                    "Value": v.dynasty_value,
+                    "Grade": v.grade,
+                    "Profile": _truncate(v.summary, 60),
+                } for v in profile.targets_on_roster])
+                _safe_dataframe(tdf, height=280)
+
+            if profile.pick_values:
+                st.subheader("Draft pick capital")
+                pdf = pd.DataFrame([{"Pick": l, "Value": v} for l, v in profile.pick_values])
+                _safe_dataframe(pdf, height=160)
+
+            team_proposals = [p for p in proposals if p.target_manager == selected]
+            if team_proposals:
+                st.subheader(f"Suggested deals with {selected}")
+                for p in team_proposals[:3]:
+                    send = ", ".join(p.you_send_players + p.you_send_picks)
+                    recv = ", ".join(p.you_receive_players + p.you_receive_picks)
+                    st.markdown(f"**Send** {send} → **Get** {recv} · Value Δ {p.value_delta:+.0f} ({p.fairness})")
+
+        elif section == "Manager tendencies":
+            st.caption("Built from prior-season drafts and trade history in your Sleeper league chain.")
+            trows = [{
+                "Manager": t.manager,
+                "Archetype": t.archetype,
+                "Trades": t.trade_count,
+                "Picks moved": t.picks_traded,
+                "Early RB%": f"{t.draft_rb_early_pct:.0f}%",
+                "Early WR%": f"{t.draft_wr_early_pct:.0f}%",
+                "Youth%": f"{t.draft_youth_pct:.0f}%",
+                "Likes": ", ".join(t.likes) or "—",
+                "Notes": _truncate(t.notes, 80),
+            } for t in tendencies.values()]
+            trows.sort(key=lambda r: r["Trades"], reverse=True)
+            _safe_dataframe(pd.DataFrame(trows), height=420)
+
+        else:
             my = overview.get("my_needs")
             if my:
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Desperate for", ", ".join(my.desperate_for) or "None")
                 c2.metric("Surplus", ", ".join(f"{k}+{v}" for k, v in my.surplus.items()) or "None")
-                c3.metric("Starter gaps", len([g for g in my.starter_gaps.values() if g > 0]))
+                c3.metric("Match score leaders", len([p for p in profiles if p.best_match_score >= 3]))
 
             rows = [{
-                "Manager": t["manager"],
-                "Desperate": ", ".join(t["desperate_for"]) or "—",
-                "Surplus": ", ".join(t["overloaded_at"]) or "—",
-                "RB": t["counts"].get("RB", 0),
-                "WR": t["counts"].get("WR", 0),
-            } for t in overview["all_teams"]]
-            _safe_dataframe(pd.DataFrame(rows), height=420)
-
-        elif section == "Trade targets":
-            matches = analyst.trade_targets()
-            if not matches:
-                st.info("No auto-matches — use the manager map to find desperate teams.")
-                st.markdown(
-                    "**Tip:** Offer from a position you're deep at to a manager who's desperate there."
-                )
-            else:
-                for t in matches[:8]:
-                    with st.container(border=True):
-                        st.markdown(f"**{t.target_manager}** · leverage {t.leverage_score:.0f}")
-                        st.markdown(f"Send **{', '.join(t.you_give)}** → Get **{', '.join(t.you_get)}**")
-                        st.caption(t.rationale)
-
-        else:
-            profiles = analyst.manager_draft_profiles()
-            prof_df = pd.DataFrame([{
-                "Slot": _cell(p.draft_slot),
                 "Manager": p.manager,
-                "Tendency": p.tendency,
-                "Keepers": ", ".join(p.keeper_positions) or "—",
-                "Prediction": _truncate(p.draft_prediction, 80),
-            } for p in profiles])
-            _safe_dataframe(prof_df, height=420)
+                "Match": p.best_match_score,
+                "Desperate": ", ".join(p.desperate_for) or "—",
+                "Surplus": ", ".join(p.surplus_at) or "—",
+                "Mode": p.win_mode,
+                "Top need": p.desperate_for[0] if p.desperate_for else "—",
+            } for p in profiles if p.manager != overview.get("my_team")]
+            rows.sort(key=lambda r: r["Match"], reverse=True)
+            _safe_dataframe(pd.DataFrame(rows), height=420)
     except Exception as e:
         st.error(f"League failed: {e}")
 

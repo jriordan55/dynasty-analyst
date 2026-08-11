@@ -14,6 +14,7 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
+from src.trade_analysis import analyze_league_trades, proposals_to_legacy_matches
 from src.draft import (
     build_draft_board,
     build_keeper_plan,
@@ -160,11 +161,34 @@ class DynastyAnalyst:
         _, my_team = self._ensure_loaded()
         return find_sell_candidates(my_team, self.adp_map, self.config, self.intel())
 
+    def _trade_analysis(self):
+        snapshot, my_team = self._ensure_loaded()
+        keepers = self.config.get("keepers") or self.get_keepers()
+        cfg = {**self.config, "keepers": keepers}
+        plan = build_keeper_plan(my_team, keepers, self.adp_map, cfg, self.draft_state())
+        return analyze_league_trades(snapshot, my_team, cfg, self.intel(), keeper_plan=plan)
+
     def trade_targets(self) -> list:
+        _, proposals, _ = self._trade_analysis()
+        if proposals:
+            return proposals_to_legacy_matches(proposals)
         snapshot, my_team = self._ensure_loaded()
         all_needs = [analyze_team_needs(t, self.config) for t in snapshot["teams"]]
         my_needs = next(n for n in all_needs if n.owner_id == my_team.get("owner_id"))
         return find_trade_matches(my_needs, all_needs, self.intel().adp_map, my_team)
+
+    def trade_proposals(self) -> list:
+        _, proposals, _ = self._trade_analysis()
+        return proposals
+
+    def team_trade_profiles(self) -> list:
+        profiles, _, _ = self._trade_analysis()
+        return profiles
+
+    def manager_tendencies(self) -> dict:
+        snapshot = self._ensure_snapshot()
+        from src.trade_analysis import build_manager_tendencies
+        return build_manager_tendencies(snapshot, self.intel())
 
     def waiver_targets(self) -> list:
         snapshot, my_team = self._ensure_loaded()

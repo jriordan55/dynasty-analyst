@@ -49,6 +49,99 @@ class SleeperClient:
             week = state.get("week", 1)
         return self._get(f"/league/{self.league_id}/transactions/{week}")
 
+    def get_traded_picks(self) -> list[dict]:
+        return self._get(f"/league/{self.league_id}/traded_picks")
+
+    def get_league_chain(self, max_seasons: int = 4) -> list[dict]:
+        """Walk previous_league_id to collect recent seasons."""
+        chain: list[dict] = []
+        current_id: str | None = self.league_id
+        seen: set[str] = set()
+        while current_id and current_id not in seen and len(chain) < max_seasons:
+            seen.add(current_id)
+            league = self.get_league_by_id(current_id)
+            chain.append(league)
+            current_id = league.get("previous_league_id")
+        return chain
+
+    def get_league_by_id(self, league_id: str) -> dict:
+        return self._get(f"/league/{league_id}")
+
+    def get_all_transactions(self, max_week: int = 18) -> list[dict]:
+        """Completed trades and adds across all weeks."""
+        all_txns: list[dict] = []
+        seen_ids: set[str] = set()
+        for week in range(1, max_week + 1):
+            try:
+                txns = self.get_transactions(week)
+            except Exception:
+                continue
+            for txn in txns:
+                tid = txn.get("transaction_id")
+                if tid and tid in seen_ids:
+                    continue
+                if tid:
+                    seen_ids.add(tid)
+                all_txns.append({**txn, "week": week})
+        return all_txns
+
+    def get_historical_draft_picks(self, max_seasons: int = 3) -> list[dict]:
+        """Draft picks from current + previous league seasons."""
+        history: list[dict] = []
+        for league in self.get_league_chain(max_seasons):
+            lid = league["league_id"]
+            try:
+                drafts = self._get(f"/league/{lid}/drafts")
+            except Exception:
+                continue
+            for draft_meta in drafts or []:
+                draft_id = draft_meta.get("draft_id")
+                if not draft_id:
+                    continue
+                try:
+                    picks = self.get_draft_picks(draft_id)
+                except Exception:
+                    continue
+                history.append({
+                    "league_id": lid,
+                    "season": league.get("season"),
+                    "draft_id": draft_id,
+                    "picks": picks,
+                })
+        return history
+
+    def get_trade_history_bundle(self, max_seasons: int = 3) -> dict:
+        """Transactions + draft history + pick ownership for trade intel."""
+        chain = self.get_league_chain(max_seasons)
+        trades: list[dict] = []
+        seen: set[str] = set()
+        for league in chain:
+            lid = league["league_id"]
+            for week in range(1, 19):
+                try:
+                    txns = self._get(f"/league/{lid}/transactions/{week}")
+                except Exception:
+                    continue
+                for txn in txns:
+                    if txn.get("type") != "trade" or txn.get("status") != "complete":
+                        continue
+                    tid = txn.get("transaction_id")
+                    if tid and tid in seen:
+                        continue
+                    if tid:
+                        seen.add(tid)
+                    trades.append({**txn, "source_league_id": lid, "week": week})
+        try:
+            traded_picks = self.get_traded_picks()
+        except Exception:
+            traded_picks = []
+        return {
+            "league_chain": chain,
+            "trades": trades,
+            "draft_history": self.get_historical_draft_picks(max_seasons),
+            "traded_picks": traded_picks,
+        }
+
     def get_trending_players(self, lookback_hours: int = 24, limit: int = 25) -> dict:
         adds = self._client.get(
             f"{self.BASE}/players/nfl/trending/add",
@@ -190,8 +283,11 @@ class SleeperClient:
                 "wins": roster.get("settings", {}).get("wins", 0),
                 "losses": roster.get("settings", {}).get("losses", 0),
                 "players": roster_players,
+                "draft_picks": roster.get("draft_picks") or [],
                 "is_mine": roster.get("owner_id") == my_user_id,
             })
+
+        trade_history = self.get_trade_history_bundle(max_seasons=3)
 
         return {
             "league": league,
@@ -199,6 +295,7 @@ class SleeperClient:
             "trending": trending,
             "my_user_id": my_user_id,
             "draft": draft_state,
+            "trade_history": trade_history,
         }
 
     def close(self) -> None:
