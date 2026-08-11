@@ -22,6 +22,7 @@ from src.draft import (
     sync_keepers_from_draft,
 )
 from src.news import FantasyNewsClient, get_news_client
+from src.player_intel import PlayerIntel
 from src.sleeper import SleeperClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +68,13 @@ class DynastyAnalyst:
         self.news = get_news_client()
         self._snapshot: dict | None = None
         self._my_team: dict | None = None
+        self._intel: PlayerIntel | None = None
+
+    def intel(self) -> PlayerIntel:
+        if self._intel is None:
+            self._intel = PlayerIntel.from_snapshot(self._ensure_snapshot(), self.news)
+            self.adp_map = self._intel.adp_map
+        return self._intel
 
     def sync(self, owner_id: str | None = None) -> dict:
         league_id = self.config["league_id"]
@@ -143,24 +151,24 @@ class DynastyAnalyst:
 
     def grade_my_roster(self) -> list[dict]:
         _, my_team = self._ensure_loaded()
-        return grade_roster(my_team, self.adp_map, self.news)
+        return grade_roster(my_team, self.adp_map, self.news, self.intel())
 
     def sell_candidates(self) -> list:
         _, my_team = self._ensure_loaded()
-        return find_sell_candidates(my_team, self.adp_map, self.config)
+        return find_sell_candidates(my_team, self.adp_map, self.config, self.intel())
 
     def trade_targets(self) -> list:
         snapshot, my_team = self._ensure_loaded()
         all_needs = [analyze_team_needs(t, self.config) for t in snapshot["teams"]]
         my_needs = next(n for n in all_needs if n.owner_id == my_team.get("owner_id"))
-        return find_trade_matches(my_needs, all_needs, self.adp_map, my_team)
+        return find_trade_matches(my_needs, all_needs, self.intel().adp_map, my_team)
 
     def waiver_targets(self) -> list:
         snapshot, my_team = self._ensure_loaded()
         my_needs = analyze_team_needs(my_team, self.config)
         return find_waiver_targets(
             snapshot, my_team, self.adp_map,
-            snapshot.get("trending", {}), my_needs,
+            snapshot.get("trending", {}), my_needs, self.intel(),
         )
 
     def draft_state(self) -> dict | None:
@@ -201,15 +209,9 @@ class DynastyAnalyst:
     def draft_board(self, keeper_names: list[str] | None = None, limit: int = 75) -> list:
         snapshot = self._ensure_snapshot()
         names = keeper_names if keeper_names is not None else self.get_keepers()
-        news: list[dict] = []
-        injuries: list[dict] = []
-        try:
-            news = self.news.get_news(limit=60)
-            injuries = self.news.get_injuries()
-        except Exception:
-            pass
+        intel = self.intel()
         return build_draft_board(
-            self.adp_map, snapshot, self.config, names, news, injuries, limit=limit,
+            self.adp_map, snapshot, self.config, names, intel=intel, limit=limit,
         )
 
     def pick_recommendations(self, keeper_names: list[str] | None = None, limit: int = 5) -> list:

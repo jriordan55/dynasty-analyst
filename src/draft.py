@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from src.adp import lookup_adp
 from src.analysis import CORE_POSITIONS, analyze_team_needs
+from src.player_intel import positional_scarcity
 from src.models import (
     DraftBoardEntry,
     KeeperPlan,
@@ -153,12 +154,14 @@ def build_draft_board(
     keeper_names: list[str],
     news: list[dict] | None = None,
     injuries: list[dict] | None = None,
+    intel=None,
     limit: int = 75,
 ) -> list[DraftBoardEntry]:
     news = news or []
     injuries = injuries or []
     draft = snapshot.get("draft")
     drafted = _drafted_names(draft)
+    scarcity = positional_scarcity(draft)
 
     my_team = next((t for t in snapshot["teams"] if t.get("is_mine")), None)
     if not my_team:
@@ -175,17 +178,26 @@ def build_draft_board(
         if player.position not in CORE_POSITIONS:
             continue
         fit, reason = roster_fit_score(player.position, player.adp, needs, pos_counts)
-        flag = _news_flags_for_player(player.name, news, injuries)
+        if scarcity.get(player.position, 0) > 15:
+            fit += 8
+            reason = f"{reason}; {player.position} run" if reason else f"{player.position} run"
+        if intel:
+            fit, reason = intel.adjust_fit_score(player.name, player.position, fit, reason)
+        flag = intel.flags_text(player.name, player.position) if intel else _news_flags_for_player(player.name, news, injuries)
+        adp_val = player.adp
+        if intel:
+            ctx = intel.get(player.name, player.position)
+            adp_val = ctx.blended_adp or adp_val
         entries.append(
             DraftBoardEntry(
                 player=player.name,
                 position=player.position,
-                adp=player.adp,
+                adp=adp_val,
                 team=player.team,
                 fit_score=round(fit, 1),
                 fit_reason=reason,
                 news_flag=flag,
-                tier=_adp_tier(player.adp),
+                tier=_adp_tier(adp_val),
             )
         )
 
@@ -201,7 +213,9 @@ def recommend_picks(
     seen_pos: dict[str, int] = {}
 
     for entry in sorted(board, key=lambda e: (-e.fit_score, e.adp or 999)):
-        if entry.news_flag.startswith("Injury"):
+        if entry.news_flag.lower().startswith("injury: out") or "injury: doubtful" in entry.news_flag.lower():
+            continue
+        if "Injury: Out" in entry.news_flag or "Injury: Doubtful" in entry.news_flag:
             continue
         pos_count = seen_pos.get(entry.position, 0)
         if pos_count >= 2 and entry.fit_score < 70:
@@ -237,17 +251,30 @@ def recommend_picks(
     return recs
 
 
-def _tendency_label(counts: dict[str, int], keeper_positions: list[str]) -> str:
-    rb, wr = counts.get("RB", 0), counts.get("WR", 0)
-    early = keeper_positions[:2]
+def _early_draft_positions(draft: dict | None, roster_id: int) -> list[str]:
+    if not draft:
+        return []
+    positions = []
+    for pick in draft.get("picks", []):
+        if pick.get("roster_id") == roster_id and not pick.get("is_keeper"):
+            if pick.get("round", 99) <= 5:
+                pos = pick.get("position") or pick.get("metadata", {}).get("position", "")
+                if pos:
+                    positions.append(pos)
+    return positions
 
-    if rb >= wr + 2 or early.count("RB") >= 2:
+
+def _tendency_label(counts: dict[str, int], keeper_positions: list[str], early_picks: list[str]) -> str:
+    rb, wr = counts.get("RB", 0), counts.get("WR", 0)
+    early = early_picks or keeper_positions[:2]
+
+    if early.count("RB") >= 2 or rb >= wr + 2:
         return "RB-focused"
-    if wr >= rb + 2 or early.count("WR") >= 2:
+    if early.count("WR") >= 2 or wr >= rb + 2:
         return "WR-heavy"
-    if counts.get("QB", 0) >= 2:
+    if early.count("QB") >= 1 or counts.get("QB", 0) >= 2:
         return "QB depth"
-    if counts.get("TE", 0) >= 2:
+    if early.count("TE") >= 1 or counts.get("TE", 0) >= 2:
         return "TE premium"
     return "Balanced"
 
@@ -286,8 +313,9 @@ def build_manager_profiles(
                 if pick.get("roster_id") == team.get("roster_id") and pick.get("is_keeper"):
                     keeper_positions.append(pick.get("position") or "?")
 
+        early = _early_draft_positions(draft, team.get("roster_id", 0))
         counts = needs.position_counts
-        tendency = _tendency_label(counts, keeper_positions)
+        tendency = _tendency_label(counts, keeper_positions, early)
         profiles.append(
             ManagerDraftProfile(
                 manager=team.get("owner_name", "Unknown"),

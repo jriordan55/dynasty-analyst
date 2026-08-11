@@ -190,7 +190,7 @@ st.set_page_config(
 )
 
 st.title("Dynasty Fantasy Football Analyst")
-st.caption("Sleeper · 4for4 ADP · @RotoWireNFL · @UnderdogNFL · ESPN")
+st.caption("Sleeper · 4for4 + Sleeper ADP · ESPN injuries · depth charts · trending adds · live news")
 
 with st.sidebar:
     st.header("League Setup")
@@ -400,7 +400,7 @@ with tab_draft:
             board = [b for b in board if b.position == pos_filter]
 
         st.subheader("Available players — ranked by roster fit")
-        st.caption("Fit score blends ADP value with your post-keeper needs. News/injury flags shown.")
+        st.caption("Fit score uses blended ADP (4for4 + Sleeper), VOR, injuries, depth chart, trending, and positional runs.")
         if not board:
             st.info("No available players found. Sync draft or check keepers.")
         else:

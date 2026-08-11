@@ -88,11 +88,14 @@ def grade_roster(
     team: dict,
     adp_map: dict[str, Player],
     news_client=None,
+    intel=None,
 ) -> list[dict]:
     grades = []
     news = []
     injuries = []
-    if news_client:
+    if intel:
+        pass
+    elif news_client:
         try:
             news = news_client.get_news(limit=40)
             injuries = news_client.get_injuries()
@@ -106,6 +109,9 @@ def grade_roster(
 
         adp_entry = lookup_adp(p["name"], adp_map)
         adp = adp_entry.adp if adp_entry else None
+        if intel:
+            ctx = intel.get(p["name"], pos)
+            adp = ctx.blended_adp or adp
 
         age = p.get("age")
         grade = "C"
@@ -140,7 +146,18 @@ def grade_roster(
             elif age <= 24:
                 notes.append(f"Youth upside ({age})")
 
-        if news_client:
+        if intel:
+            ctx = intel.get(p["name"], pos)
+            if ctx.injury_penalty >= 30:
+                grade = _downgrade(grade)
+                grade = _downgrade(grade)
+                notes.append(f"Injury [{ctx.injury_status}]: {ctx.injury_detail or 'monitor'}")
+            elif ctx.injury_penalty >= 12:
+                grade = _downgrade(grade)
+                notes.append(f"Injury [{ctx.injury_status}]")
+            _, extra = intel.grade_adjustments(p["name"], pos)
+            notes.extend(extra)
+        elif news_client:
             inj = news_client.injury_for_player(p["name"], injuries)
             if inj:
                 grade = _downgrade(grade)
@@ -177,6 +194,7 @@ def find_sell_candidates(
     my_team: dict,
     adp_map: dict[str, Player],
     config: dict,
+    intel=None,
 ) -> list[SellCandidate]:
     candidates: list[SellCandidate] = []
     contending = config.get("notes", {}).get("contending", True)
@@ -188,6 +206,8 @@ def find_sell_candidates(
 
         adp_entry = lookup_adp(p["name"], adp_map)
         adp = adp_entry.adp if adp_entry else None
+        if intel:
+            adp = intel.get(p["name"], pos).blended_adp or adp
         age = p.get("age")
         reasons: list[str] = []
         urgency: str = "low"
@@ -209,6 +229,17 @@ def find_sell_candidates(
         if p.get("injury_status") in ("Out", "IR", "PUP", "Doubtful"):
             reasons.append(f"Injury status: {p['injury_status']}")
             urgency = "high"
+
+        if intel:
+            ctx = intel.get(p["name"], pos)
+            if ctx.injury_penalty >= 30:
+                reasons.append(f"ESPN injury: {ctx.injury_status}")
+                urgency = "high"
+            if ctx.trending_signal == "Trending drop":
+                reasons.append("Sleeper trending drop")
+                urgency = "high" if urgency == "low" else urgency
+            if ctx.depth_chart_order and ctx.depth_chart_order >= 3:
+                reasons.append("Lost depth chart role")
 
         if reasons:
             candidates.append(
@@ -321,38 +352,48 @@ def find_waiver_targets(
     adp_map: dict[str, Player],
     trending: dict,
     my_needs: TeamNeeds,
+    intel=None,
 ) -> list[WaiverTarget]:
-    owned_ids = set()
-    for team in league_snapshot["teams"]:
-        for p in team["players"]:
-            owned_ids.add(p.get("id", p["name"]))
-
     gap_positions = list(my_needs.starter_gaps.keys()) or my_needs.desperate_for
     if not gap_positions:
         gap_positions = ["RB", "WR"]
 
-    targets: list[WaiverTarget] = []
-    adds = trending.get("adds", [])
-
-    for entry in adds:
-        player_id = str(entry.get("player_id", ""))
-        count = entry.get("count", 0)
-        # We don't have full player pool in trending — use count as signal
-        targets.append({
-            "player_id": player_id,
-            "add_count": count,
-        })
-
-    # Best available = high ADP players not on any roster
     available: list[WaiverTarget] = []
-    team_names = {p["name"].lower() for p in my_team["players"]}
     all_owned = set()
     for team in league_snapshot["teams"]:
         for p in team["players"]:
             all_owned.add(p["name"].lower())
 
+    if intel:
+        for t in intel.trending_add_targets(limit=15):
+            name = t["name"]
+            if name.lower() in all_owned:
+                continue
+            adp_entry = lookup_adp(name, adp_map)
+            adp = adp_entry.adp if adp_entry else None
+            pos = t.get("position") or (adp_entry.position if adp_entry else "")
+            if pos not in CORE_POSITIONS:
+                continue
+            priority = 1 if pos in gap_positions else 2
+            ctx = intel.get(name, pos)
+            reason = f"Sleeper trending add ({t['count']}) — fills {', '.join(gap_positions)} need"
+            if ctx.injury_status:
+                reason += f" · watch {ctx.injury_status}"
+            available.append(
+                WaiverTarget(
+                    player=name,
+                    position=pos,
+                    adp=adp,
+                    owned_pct=None,
+                    reason=reason,
+                    priority=priority,
+                )
+            )
+
     for name, adp_player in adp_map.items():
         if name in all_owned:
+            continue
+        if any(w.player.lower() == adp_player.name.lower() for w in available):
             continue
         if adp_player.position not in gap_positions and adp_player.position not in CORE_POSITIONS:
             continue
@@ -361,6 +402,12 @@ def find_waiver_targets(
 
         priority = 1 if adp_player.position in gap_positions else 2
         reason = f"Top-{adp_player.adp} ADP {adp_player.position} available — fills {', '.join(gap_positions)} need"
+        if intel:
+            ctx = intel.get(adp_player.name, adp_player.position)
+            if ctx.trending_signal:
+                reason += f" · {ctx.trending_signal}"
+            if ctx.vor >= 15:
+                reason += f" · VOR +{ctx.vor:.0f}"
 
         available.append(
             WaiverTarget(
