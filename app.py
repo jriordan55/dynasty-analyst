@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from src.analyst import DynastyAnalyst, load_config
+from src.news import FantasyNewsClient
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config" / "league.json"
@@ -25,6 +26,15 @@ def get_config() -> dict:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     base = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
     return base
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_news_feeds() -> dict:
+    client = FantasyNewsClient()
+    try:
+        return client.get_news_by_source()
+    finally:
+        client.close()
 
 
 st.set_page_config(
@@ -174,17 +184,19 @@ with tab_waivers:
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 with tab_news:
-    try:
-        by_source = analyst.news.get_news_by_source()
-    except Exception as e:
-        st.error(f"Could not load news feeds: {e}")
-        by_source = {}
+    by_source = load_news_feeds()
+
+    if not any(by_source.get(k) for k in ("rotowire", "underdog", "espn")):
+        st.warning("Some feeds are slow or unavailable — showing what we could load.")
 
     col1, col2, col3 = st.columns(3)
     with col1:
         st.subheader("@RotoWireNFL")
         st.caption("[x.com/RotoWireNFL](https://x.com/RotoWireNFL)")
-        for n in by_source.get("rotowire", [])[:10]:
+        items = by_source.get("rotowire", [])
+        if not items:
+            st.info("No headlines loaded. Rotowire RSS may be temporarily unavailable.")
+        for n in items[:10]:
             st.markdown(f"**{n['headline']}**")
             if n.get("description"):
                 st.caption(n["description"][:220])
@@ -194,18 +206,44 @@ with tab_news:
     with col2:
         st.subheader("@UnderdogNFL")
         st.caption("[x.com/UnderdogNFL](https://x.com/UnderdogNFL)")
-        for n in by_source.get("underdog", [])[:10]:
+        items = by_source.get("underdog", [])
+        if not items:
+            st.info("No headlines loaded. Underdog feed may be temporarily unavailable.")
+        for n in items[:10]:
             st.markdown(f"**{n['headline']}**")
             if n.get("link"):
                 st.markdown(f"[Read more]({n['link']})")
             st.divider()
     with col3:
         st.subheader("ESPN")
-        for n in by_source.get("espn", [])[:10]:
+        items = by_source.get("espn", [])
+        if not items:
+            st.info("No ESPN headlines loaded.")
+        for n in items[:10]:
             st.markdown(f"**{n['headline']}**")
+            if n.get("description"):
+                st.caption(n["description"][:180])
             if n.get("link"):
                 st.markdown(f"[Read more]({n['link']})")
             st.divider()
+
+    st.subheader("Injury Report")
+    injuries = by_source.get("injuries", [])
+    if injuries:
+        inj_df = pd.DataFrame([{
+            "Player": i["name"],
+            "Team": i["team"],
+            "Pos": i.get("position", ""),
+            "Status": i["status"],
+            "Detail": i.get("detail", ""),
+        } for i in injuries[:25]])
+        st.dataframe(inj_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("Injury report unavailable right now.")
+
+    if st.button("Refresh news"):
+        load_news_feeds.clear()
+        st.rerun()
 
 st.divider()
 with st.expander("Export context for Claude / Cursor chat"):

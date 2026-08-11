@@ -14,7 +14,7 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
-from src.news import EspnNewsClient, FantasyNewsClient
+from src.news import FantasyNewsClient
 from src.sleeper import SleeperClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +57,7 @@ class DynastyAnalyst:
     def __init__(self, config: dict | None = None):
         self.config = config or load_config()
         self.adp_map = load_adp()
-        self.news = EspnNewsClient()
+        self.news = FantasyNewsClient()
         self._snapshot: dict | None = None
         self._my_team: dict | None = None
 
@@ -163,7 +163,6 @@ class DynastyAnalyst:
         sells = self.sell_candidates()
         trades = self.trade_targets()
         waivers = self.waiver_targets()
-        injuries = self.news.get_injuries()[:20]
 
         my_needs = overview.get("my_needs")
         lines = [
@@ -230,7 +229,11 @@ class DynastyAnalyst:
             for n in self.news.get_news(limit=10):
                 lines.append(f"- [{n.get('source', 'News')}] {n['headline']}")
 
-        lines.extend(["", "## Key Injuries"])
+        lines.extend(["", "## Key Injuries (ESPN)"])
+        try:
+            injuries = self.news.get_injuries()[:15]
+        except Exception:
+            injuries = []
         for inj in injuries[:10]:
             lines.append(f"- {inj['name']} ({inj['team']}): {inj['status']} — {inj.get('detail', '')}")
 
