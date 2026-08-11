@@ -685,22 +685,20 @@ with tab_league:
 
         if section == "Trade proposals":
             st.caption(
-                "Trade values powered by [FantasyCalc](https://www.fantasycalc.com/trade-calculator) "
-                "(real trades). Player insights from [FantasyPros](https://www.fantasypros.com/nfl/) when API key is set."
+                "Realistic offers only — filtered so the other manager breaks even or wins slightly on "
+                "[FantasyCalc](https://www.fantasycalc.com/trade-calculator). "
+                "Rankings from FantasyCalc + [LeagueLogs](https://leaguelogs.com) (free)."
             )
-            fp_key = config.get("fantasypros_api_key") or ""
-            if not fp_key:
-                st.info(
-                    "Add **FANTASYPROS_API_KEY** in Streamlit secrets or `.env` for ECR rankings & projections. "
-                    "[Request free API access](https://www.fantasypros.com/api-data/)"
-                )
             if not proposals:
                 st.info("No strong proposals yet — sync league data or check Team breakdown for manual targets.")
             else:
                 for p in proposals[:10]:
                     with st.container(border=True):
-                        head = f"**{p.target_manager}** ({p.target_team})"
-                        st.markdown(f"{head} · {p.confidence} confidence · Leverage **{p.leverage_score:.0f}**")
+                        acc_color = {"High": "🟢", "Medium": "🟡", "Low": "🔴"}.get(p.acceptance, "")
+                        head = f"{acc_color} **{p.target_manager}** ({p.target_team})"
+                        st.markdown(
+                            f"{head} · **{p.acceptance} accept chance** · Leverage {p.leverage_score:.0f}"
+                        )
                         send = p.you_send_players + [f"📋 {x}" for x in p.you_send_picks]
                         recv = p.you_receive_players + [f"📋 {x}" for x in p.you_receive_picks]
                         c1, c2, c3 = st.columns([2, 2, 1])
@@ -720,7 +718,9 @@ with tab_league:
                                 st.metric("Value in", f"{p.receive_value:.0f}")
                                 st.caption(f"Out {p.send_value:.0f} · Δ {p.value_delta:+.0f} · {p.fairness}")
                         if p.fp_insight:
-                            st.caption(f"**FantasyPros:** {p.fp_insight}")
+                            st.caption(f"**Market:** {p.fp_insight}")
+                        if p.their_fc_edge > 0:
+                            st.caption(f"They gain **{p.their_fc_edge:,}** on FantasyCalc — fair for them.")
                         st.caption(f"**Why they bite:** {_truncate(p.why_they_accept, 120)}")
                         st.caption(f"**Why you win:** {_truncate(p.why_you_win, 120)} · *{p.risk_notes}*")
 
@@ -764,7 +764,7 @@ with tab_league:
                         "FC Trend": v.fc_trend or "—",
                         "Grade": v.grade,
                         "FantasyPros": _truncate(v.fp_summary, 40) or "—",
-                        "Profile": _truncate(v.summary, 50),
+                        "Market": _truncate(v.summary, 50),
                     } for v in profile.tradeable_assets[:8]])
                     _safe_dataframe(adf, height=280)
                 else:

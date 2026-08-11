@@ -14,7 +14,7 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
-from src.fantasycalc import FantasyCalcClient
+from src.market_insights import MarketInsightsClient
 from src.fantasypros import FantasyProsClient
 from src.trade_analysis import analyze_league_trades, proposals_to_legacy_matches
 from src.draft import (
@@ -167,22 +167,21 @@ class DynastyAnalyst:
     def _market_clients(self):
         snapshot = self._ensure_snapshot()
         cfg = {**self.config, "league": snapshot.get("league") or {}}
-        fc = FantasyCalcClient(cfg)
-        fc.load()
         fp_key = self.config.get("fantasypros_api_key") or os.getenv("FANTASYPROS_API_KEY", "")
-        fp = FantasyProsClient(api_key=fp_key, config=cfg)
-        fp.load()
-        return fc, fp
+        fp = FantasyProsClient(api_key=fp_key, config=cfg) if fp_key else None
+        market = MarketInsightsClient(cfg, fp_client=fp)
+        market.load()
+        return market.fc, market
 
     def _trade_analysis(self):
         snapshot, my_team = self._ensure_loaded()
         keepers = self.config.get("keepers") or self.get_keepers()
         cfg = {**self.config, "keepers": keepers, "league": snapshot.get("league") or {}}
         plan = build_keeper_plan(my_team, keepers, self.adp_map, cfg, self.draft_state())
-        fc, fp = self._market_clients()
+        fc, market = self._market_clients()
         return analyze_league_trades(
             snapshot, my_team, cfg, self.intel(), keeper_plan=plan,
-            fc_client=fc, fp_client=fp,
+            fc_client=fc, market_client=market,
         )
 
     def trade_targets(self) -> list:

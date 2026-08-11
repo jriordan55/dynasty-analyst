@@ -152,6 +152,9 @@ class TradeProposal:
     fc_delta: int = 0
     fc_verdict: str = ""
     fp_insight: str = ""
+    acceptance: str = "Medium"
+    their_fc_edge: int = 0
+    rejection_risk: str = ""
 
 
 @dataclass

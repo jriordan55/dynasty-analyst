@@ -67,22 +67,18 @@ def _enrich_player_value(
     pv: PlayerValue,
     player: dict,
     intel: PlayerIntel,
-    fc_client=None,
-    fp_client=None,
+    market_client=None,
 ) -> None:
-    if fc_client:
-        fc = fc_client.get(pv.name, _player_sleeper_id(player, intel))
-        if fc:
-            pv.fc_value = fc.value
-            pv.fc_trend = fc.trend_label
-            if fc.trend_label not in pv.summary:
-                pv.summary = f"FantasyCalc {fc.display_value} · {fc.trend_label} · {pv.summary}".strip(" · ")
-    if fp_client and fp_client.available:
-        fp = fp_client.get(pv.name)
-        if fp and fp.summary:
-            pv.fp_summary = fp.summary
-            if fp.summary not in pv.summary:
-                pv.summary = f"{fp.summary} · {pv.summary}".strip(" · ")
+    if market_client:
+        mi = market_client.get(pv.name, _player_sleeper_id(player, intel))
+        if mi:
+            if mi.fc_value:
+                pv.fc_value = mi.fc_value
+                pv.fc_trend = mi.fc_trend
+            if mi.fp_summary:
+                pv.fp_summary = mi.fp_summary
+            if mi.summary:
+                pv.summary = f"{mi.summary} · {pv.summary}".strip(" · ")
 
 QUALITY_TIERS = [
     (82, "Elite"),
@@ -127,7 +123,7 @@ def compute_player_value(
     is_starter: bool = False,
     contending: bool = True,
     fc_client=None,
-    fp_client=None,
+    market_client=None,
 ) -> PlayerValue:
     name = player["name"]
     pos = player["position"]
@@ -219,7 +215,7 @@ def compute_player_value(
         summary=" · ".join(summary_parts[:5]),
         tradeable=True,
     )
-    _enrich_player_value(pv, player, intel, fc_client, fp_client)
+    _enrich_player_value(pv, player, intel, market_client)
     return pv
 
 
@@ -400,13 +396,13 @@ def analyze_position_unit(
     *,
     contending: bool = True,
     fc_client=None,
-    fp_client=None,
+    market_client=None,
 ) -> PositionUnit:
     players = [p for p in team["players"] if p["position"] == position]
     values = [
         compute_player_value(
             p, intel, is_starter=p.get("is_starter", False),
-            contending=contending, fc_client=fc_client, fp_client=fp_client,
+            contending=contending, fc_client=fc_client, market_client=market_client,
         )
         for p in players
     ]
@@ -468,13 +464,13 @@ def build_team_trade_profile(
     tendency: ManagerTendency,
     config: dict,
     fc_client=None,
-    fp_client=None,
+    market_client=None,
 ) -> TeamTradeProfile:
     contending = config.get("notes", {}).get("contending", True)
     units = [
         analyze_position_unit(
             team, pos, intel, needs, contending=contending,
-            fc_client=fc_client, fp_client=fp_client,
+            fc_client=fc_client, market_client=market_client,
         )
         for pos in CORE_POSITIONS
     ]
@@ -485,7 +481,7 @@ def build_team_trade_profile(
     all_values = [
         compute_player_value(
             p, intel, is_starter=p.get("is_starter", False), contending=contending,
-            fc_client=fc_client, fp_client=fp_client,
+            fc_client=fc_client, market_client=market_client,
         )
         for p in team["players"]
         if p["position"] in CORE_POSITIONS
@@ -610,6 +606,66 @@ def _confidence(leverage: float, delta: float, tendency_match: bool) -> str:
     return "Low"
 
 
+def _acceptance_rating(
+    fc_eval: dict | None,
+    give_list: list,
+    get_list: list,
+    other_profile: TeamTradeProfile,
+    fc_client,
+) -> tuple[bool, str, str, int]:
+    """Return (keep, acceptance_label, rejection_risk, their_fc_edge)."""
+    if not fc_eval or not fc_eval.get("send_total"):
+        return True, "Medium", "Limited market data", 0
+
+    send = fc_eval["send_total"]
+    recv = fc_eval["receive_total"]
+    our_delta = fc_eval["delta"]
+    their_edge = send - recv  # positive = they gain on FantasyCalc
+
+    # Hard reject: we win too much — classic league veto / decline
+    if our_delta > max(250, recv * 0.06):
+        return False, "Low", "You win too much on FantasyCalc — likely declined", their_edge
+
+    if our_delta > send * 0.10:
+        return False, "Low", "Uneven value — they'd need a sweetener", their_edge
+
+    # Hard reject: asking for their best player without paying
+    for g in get_list:
+        fc = fc_client.get(g.name) if fc_client else None
+        if not fc:
+            continue
+        their_unit = next((u for u in other_profile.units if u.position == g.position), None)
+        is_starter = their_unit and g.name == their_unit.top_player
+        if fc.overall_rank <= 48 and is_starter:
+            if send < fc.value * 0.92:
+                return False, "Low", f"Asking for {g.name} (their {g.position}1) without fair pay", their_edge
+        if fc.overall_rank <= 24:
+            if send < recv * 0.98:
+                return False, "Low", f"Elite asset {g.name} — need to overpay slightly", their_edge
+
+    # Hard reject: they lose big
+    if their_edge < -max(200, send * 0.05):
+        return False, "Low", "They lose too much value on FantasyCalc", their_edge
+
+    # Tier mismatch: depth for starter
+    for g in get_list:
+        their_unit = next((u for u in other_profile.units if u.position == g.position), None)
+        if not their_unit:
+            continue
+        give_fc = fc_client.get(give_list[0].name) if fc_client and give_list else None
+        get_fc = fc_client.get(g.name) if fc_client else None
+        if give_fc and get_fc and get_fc.value > give_fc.value * 1.35:
+            if g.name == their_unit.top_player:
+                return False, "Low", "Depth-for-starter offer — unlikely to accept", their_edge
+
+    # Rate acceptance
+    if their_edge >= 50 or (-50 <= our_delta <= 80):
+        return True, "High", "", their_edge
+    if their_edge >= -80 and our_delta <= 150:
+        return True, "Medium", "Slight edge to you — may need negotiation", their_edge
+    return True, "Low", "Borderline — consider adding a pick", their_edge
+
+
 def build_trade_proposals(
     my_team: dict,
     my_needs: TeamNeeds,
@@ -620,7 +676,7 @@ def build_trade_proposals(
     *,
     max_proposals: int = 3,
     fc_client=None,
-    fp_client=None,
+    market_client=None,
 ) -> list[TradeProposal]:
     if other_profile.owner_id == my_profile.owner_id:
         return []
@@ -663,46 +719,62 @@ def build_trade_proposals(
 
     attempts: list[tuple[list, list, list, list]] = []
 
-    # 1-for-1 same position or need fill
+    # 1-for-1 — tight FantasyCalc window, slight edge to them preferred
     for give in my_assets[:5]:
         for get in their_assets[:5]:
             if get.position not in my_gaps:
                 my_unit = next((u for u in my_profile.units if u.position == get.position), None)
                 if not my_unit or get.dynasty_value < my_unit.starter_value + 5:
                     continue
-            delta = get.dynasty_value - give.dynasty_value
-            if abs(delta) <= 12:
-                attempts.append(([give], [], [get], []))
-
-    # 2-for-1 upgrade
-    for i, give1 in enumerate(my_assets[:4]):
-        for give2 in my_assets[i + 1:6]:
-            for get in their_assets[:4]:
-                if get.dynasty_value < give1.dynasty_value:
+            give_fc = fc_client.get(give.name) if fc_client else None
+            get_fc = fc_client.get(get.name) if fc_client else None
+            if give_fc and get_fc:
+                their_edge = give_fc.value - get_fc.value
+                if their_edge < -150:
                     continue
-                send_val = give1.dynasty_value + give2.dynasty_value
-                if get.dynasty_value - send_val > 8:
+                if get_fc.value > give_fc.value * 1.25 and get_fc.overall_rank <= 60:
                     continue
-                if abs(get.dynasty_value - send_val) <= 15:
-                    attempts.append(([give1, give2], [], [get], []))
+                if abs(give_fc.value - get_fc.value) > max(400, get_fc.value * 0.15):
+                    continue
+            elif abs(get.dynasty_value - give.dynasty_value) > 12:
+                continue
+            attempts.append(([give], [], [get], []))
 
-    # Pick sweeteners — they hoard picks or need value balance
+    # 2-for-1 only when they desperately need position and FC is close
+    for i, give1 in enumerate(my_assets[:3]):
+        for give2 in my_assets[i + 1:5]:
+            if give1.position != give2.position:
+                continue
+            if give1.position not in other_profile.desperate_for:
+                continue
+            for get in their_assets[:3]:
+                if fc_client:
+                    v1 = fc_client.get(give1.name)
+                    v2 = fc_client.get(give2.name)
+                    vg = fc_client.get(get.name)
+                    if not (v1 and v2 and vg):
+                        continue
+                    send = v1.value + v2.value
+                    if send - vg.value < -100 or vg.value - send > 200:
+                        continue
+                attempts.append(([give1, give2], [], [get], []))
+
+    # Pick sweeteners only to balance close deals
     my_picks = list(my_profile.pick_values)
-    their_picks = list(other_profile.pick_values)
-    if my_picks and their_assets:
+    if my_picks and their_assets and fc_client:
         for give in my_assets[:3]:
             for get in their_assets[:3]:
+                gf = fc_client.get(give.name)
+                gt = fc_client.get(get.name)
+                if not gf or not gt:
+                    continue
+                gap = gt.value - gf.value
+                if gap <= 0 or gap > 800:
+                    continue
                 for plabel, pval in my_picks[:2]:
-                    delta = get.dynasty_value - (give.dynasty_value + pval)
-                    if -5 <= delta <= 8:
+                    pick_fc = _fc_pick_value(plabel, fc_client)
+                    if pick_fc and 0 < gap - pick_fc < 200:
                         attempts.append(([give], [plabel], [get], []))
-    if their_picks and my_assets:
-        for give in my_assets[:3]:
-            for get in their_assets[:3]:
-                for plabel, pval in their_picks[:2]:
-                    delta = (get.dynasty_value + pval) - give.dynasty_value
-                    if -5 <= delta <= 10:
-                        attempts.append(([give], [], [get], [plabel]))
 
     seen: set[str] = set()
     for give_list, send_picks, get_list, recv_picks in attempts:
@@ -773,6 +845,12 @@ def build_trade_proposals(
         fp_bits = [g.fp_summary for g in get_list if g.fp_summary]
         fp_insight = fp_bits[0] if fp_bits else ""
 
+        keep, acceptance, rejection_risk, their_edge = _acceptance_rating(
+            fc_eval, give_list, get_list, other_profile, fc_client,
+        )
+        if not keep:
+            continue
+
         risks = []
         if any(g.injury for g in get_list):
             risks.append("Injury risk on incoming player")
@@ -780,6 +858,8 @@ def build_trade_proposals(
             risks.append("FantasyCalc flags this as an overpay")
         if delta < -5 and not fc_eval:
             risks.append("You pay a premium — needs counter-move")
+        if rejection_risk and rejection_risk not in risks:
+            risks.append(rejection_risk)
         if not risks:
             risks.append("Monitor news before sending")
 
@@ -798,7 +878,7 @@ def build_trade_proposals(
                 value_delta=round(delta, 1),
                 fairness=fairness_label,
                 leverage_score=round(leverage, 1),
-                confidence=_confidence(leverage, delta, tendency_match),
+                confidence=acceptance,
                 why_they_accept=why_accept,
                 why_you_win=why_win,
                 risk_notes=" · ".join(risks),
@@ -807,10 +887,17 @@ def build_trade_proposals(
                 fc_delta=fc_eval["delta"] if fc_eval else 0,
                 fc_verdict=fc_eval["verdict"] if fc_eval else "",
                 fp_insight=fp_insight,
+                acceptance=acceptance,
+                their_fc_edge=their_edge,
+                rejection_risk=rejection_risk,
             )
         )
 
-    proposals.sort(key=lambda p: (p.leverage_score, p.receive_value - p.send_value), reverse=True)
+    def _sort_key(p: TradeProposal) -> tuple:
+        acc = {"High": 0, "Medium": 1, "Low": 2}.get(p.acceptance, 2)
+        return (acc, -p.their_fc_edge, -p.leverage_score)
+
+    proposals.sort(key=_sort_key)
     return proposals[:max_proposals]
 
 
@@ -821,7 +908,7 @@ def analyze_league_trades(
     intel: PlayerIntel,
     keeper_plan=None,
     fc_client=None,
-    fp_client=None,
+    market_client=None,
 ) -> tuple[list[TeamTradeProfile], list[TradeProposal], dict[str, ManagerTendency]]:
     all_needs = [analyze_team_needs(t, config) for t in snapshot["teams"]]
     tendencies = build_manager_tendencies(snapshot, intel)
@@ -848,7 +935,7 @@ def analyze_league_trades(
         )
         profile = build_team_trade_profile(
             team, needs, intel, tendency, config,
-            fc_client=fc_client, fp_client=fp_client,
+            fc_client=fc_client, market_client=market_client,
         )
         if team.get("is_mine"):
             my_profile = profile
@@ -883,11 +970,13 @@ def analyze_league_trades(
         other.best_match_score = match_score
         proposals = build_trade_proposals(
             my_team, my_needs, my_profile, other, intel, config,
-            max_proposals=2, fc_client=fc_client, fp_client=fp_client,
+            max_proposals=2, fc_client=fc_client, market_client=market_client,
         )
         all_proposals.extend(proposals)
 
-    all_proposals.sort(key=lambda p: (p.leverage_score, p.value_delta), reverse=True)
+    all_proposals.sort(
+        key=lambda p: ({"High": 0, "Medium": 1, "Low": 2}.get(p.acceptance, 2), -p.their_fc_edge),
+    )
     profiles.sort(key=lambda p: p.best_match_score, reverse=True)
     return profiles, all_proposals[:20], tendencies
 
