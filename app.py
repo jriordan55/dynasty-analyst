@@ -66,6 +66,113 @@ def _safe_dataframe(df: pd.DataFrame) -> None:
     st.dataframe(df.astype(str), width="stretch", hide_index=True)
 
 
+def _roster_player_names(analyst: DynastyAnalyst) -> set[str]:
+    try:
+        _, my_team = analyst._ensure_loaded()
+        skill = {"QB", "RB", "WR", "TE"}
+        return {
+            p["name"] for p in my_team.get("players", [])
+            if p.get("name") and p.get("position") in skill
+        }
+    except Exception:
+        return set()
+
+
+def _match_roster_players(item: dict, roster_names: set[str]) -> list[str]:
+    text = f"{item.get('headline', '')} {item.get('description', '')}".lower()
+    matched: list[str] = []
+    tagged = item.get("player", "")
+    if tagged and tagged in roster_names:
+        matched.append(tagged)
+    for name in sorted(roster_names, key=len, reverse=True):
+        if name in matched:
+            continue
+        parts = [p for p in name.lower().split() if len(p) > 2]
+        if parts and all(p in text for p in parts):
+            matched.append(name)
+    return matched
+
+
+def _build_news_table(by_source: dict, roster_names: set[str]) -> pd.DataFrame:
+    rows: list[dict] = []
+    source_labels = {
+        "rotowire": "@RotoWireNFL",
+        "underdog": "@UnderdogNFL",
+        "espn": "ESPN",
+    }
+    for key, label in source_labels.items():
+        for item in by_source.get(key, []):
+            players = _match_roster_players(item, roster_names)
+            summary = (item.get("description") or "").strip()
+            if summary and summary == item.get("headline", ""):
+                summary = ""
+            rows.append({
+                "Your Player": ", ".join(players) if players else "—",
+                "Source": label,
+                "Headline": item.get("headline", ""),
+                "Summary": summary[:180] if summary else "—",
+                "Link": item.get("link", ""),
+                "_roster_hit": bool(players),
+                "_sort_ts": item.get("sort_ts", 0),
+            })
+
+    rows.sort(key=lambda r: (not r["_roster_hit"], -r["_sort_ts"]))
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.drop(columns=["_roster_hit", "_sort_ts"])
+
+
+def _build_injury_table(injuries: list[dict], roster_names: set[str]) -> pd.DataFrame:
+    rows: list[dict] = []
+    for inj in injuries:
+        name = inj.get("name", "")
+        on_roster = name in roster_names
+        rows.append({
+            "Your Player": name if on_roster else "—",
+            "Player": name,
+            "Team": inj.get("team", ""),
+            "Pos": inj.get("position", ""),
+            "Status": inj.get("status", ""),
+            "Detail": inj.get("detail", "") or "—",
+            "_roster_hit": on_roster,
+        })
+    rows.sort(key=lambda r: (not r["_roster_hit"], r["Player"]))
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    return df.drop(columns=["_roster_hit"])
+
+
+def _highlight_roster_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Return a Styler that highlights rows mentioning your roster players."""
+    if df.empty or "Your Player" not in df.columns:
+        return df.style
+
+    def _style_row(row: pd.Series) -> list[str]:
+        if row["Your Player"] != "—":
+            return ["background-color: #1a4d2e; color: #ecfdf5"] * len(row)
+        return [""] * len(row)
+
+    return df.style.apply(_style_row, axis=1)
+
+
+def _render_news_table(df: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("No headlines loaded right now.")
+        return
+    styled = _highlight_roster_rows(df)
+    link_cfg = {}
+    if "Link" in df.columns:
+        link_cfg["Link"] = st.column_config.LinkColumn("Link", display_text="Read →")
+    st.dataframe(
+        styled,
+        width="stretch",
+        hide_index=True,
+        column_config=link_cfg,
+    )
+
+
 st.set_page_config(
     page_title="Dynasty Analyst",
     page_icon="🏈",
@@ -249,61 +356,27 @@ with tab_waivers:
 with tab_news:
     try:
         by_source = load_news_feeds()
+        roster_names = _roster_player_names(analyst)
 
         if not any(by_source.get(k) for k in ("rotowire", "underdog", "espn")):
             st.warning("Some feeds are slow or unavailable — showing what we could load.")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.subheader("@RotoWireNFL")
-            st.caption("[x.com/RotoWireNFL](https://x.com/RotoWireNFL)")
-            items = by_source.get("rotowire", [])
-            if not items:
-                st.info("No headlines loaded. Rotowire RSS may be temporarily unavailable.")
-            for n in items[:10]:
-                st.markdown(f"**{n['headline']}**")
-                if n.get("description"):
-                    st.caption(n["description"][:220])
-                if n.get("link"):
-                    st.markdown(f"[Read more]({n['link']})")
-                st.divider()
-        with col2:
-            st.subheader("@UnderdogNFL")
-            st.caption("[x.com/UnderdogNFL](https://x.com/UnderdogNFL)")
-            items = by_source.get("underdog", [])
-            if not items:
-                st.info("No headlines loaded. Underdog feed may be temporarily unavailable.")
-            for n in items[:10]:
-                st.markdown(f"**{n['headline']}**")
-                if n.get("link"):
-                    st.markdown(f"[Read more]({n['link']})")
-                st.divider()
-        with col3:
-            st.subheader("ESPN")
-            items = by_source.get("espn", [])
-            if not items:
-                st.info("No ESPN headlines loaded.")
-            for n in items[:10]:
-                st.markdown(f"**{n['headline']}**")
-                if n.get("description"):
-                    st.caption(n["description"][:180])
-                if n.get("link"):
-                    st.markdown(f"[Read more]({n['link']})")
-                st.divider()
+        roster_only = st.checkbox("Show my roster news only", value=False)
+        news_df = _build_news_table(by_source, roster_names)
+        if roster_only and not news_df.empty:
+            news_df = news_df[news_df["Your Player"] != "—"]
+
+        st.subheader("Fantasy News Feed")
+        st.caption("Green rows mention a player on your roster. Sorted with your players first.")
+        _render_news_table(news_df)
 
         st.subheader("Injury Report")
         injuries = by_source.get("injuries", [])
-        if injuries:
-            inj_df = pd.DataFrame([{
-                "Player": i["name"],
-                "Team": i["team"],
-                "Pos": i.get("position", ""),
-                "Status": i["status"],
-                "Detail": i.get("detail", ""),
-            } for i in injuries[:25]])
-            _safe_dataframe(inj_df)
-        else:
+        inj_df = _build_injury_table(injuries[:40], roster_names)
+        if inj_df.empty:
             st.info("Injury report unavailable right now.")
+        else:
+            _render_news_table(inj_df)
 
         if st.button("Refresh news"):
             load_news_feeds.clear()
