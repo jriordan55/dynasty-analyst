@@ -34,7 +34,7 @@ st.set_page_config(
 )
 
 st.title("Dynasty Fantasy Football Analyst")
-st.caption("League-aware trades, roster grades, sell alerts, and waivers — powered by Sleeper + 4for4 ADP + live ESPN news")
+st.caption("Sleeper league sync · 4for4 ADP · Rotowire · Underdog NFL · ESPN live news")
 
 with st.sidebar:
     st.header("League Setup")
@@ -74,6 +74,9 @@ with st.sidebar:
     st.markdown("- [Find league ID on Sleeper](https://sleeper.app)")
     st.markdown("- [4for4 ADP rankings](https://www.4for4.com/adp)")
 
+    st.markdown("- [Rotowire NFL news](https://www.rotowire.com/football/news.php)")
+    st.markdown("- [Underdog NFL blog](https://underblog.underdogfantasy.com)")
+
 if not CONFIG_PATH.exists() or not get_config().get("league_id") or get_config().get("league_id") == "YOUR_LEAGUE_ID":
     st.info("Enter your Sleeper league ID and username in the sidebar, then click **Save & Sync**.")
     st.markdown(
@@ -95,8 +98,8 @@ except Exception as e:
     st.error(f"Could not load league: {e}")
     st.stop()
 
-tab_overview, tab_grades, tab_sell, tab_trades, tab_waivers = st.tabs(
-    ["League Map", "My Grades", "Sell Alerts", "Trade Targets", "Waivers"]
+tab_overview, tab_grades, tab_sell, tab_trades, tab_waivers, tab_news = st.tabs(
+    ["League Map", "My Grades", "Sell Alerts", "Trade Targets", "Waivers", "Fantasy News"]
 )
 
 with tab_overview:
@@ -169,6 +172,38 @@ with tab_waivers:
         "Why": w.reason,
     } for w in waivers[:15]])
     st.dataframe(df, use_container_width=True, hide_index=True)
+
+with tab_news:
+    try:
+        by_source = analyst.news.get_news_by_source()
+    except Exception as e:
+        st.error(f"Could not load news feeds: {e}")
+        by_source = {}
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.subheader("Rotowire NFL")
+        for n in by_source.get("rotowire", [])[:10]:
+            st.markdown(f"**{n['headline']}**")
+            if n.get("description"):
+                st.caption(n["description"][:220])
+            if n.get("link"):
+                st.markdown(f"[Read more]({n['link']})")
+            st.divider()
+    with col2:
+        st.subheader("Underdog NFL")
+        for n in by_source.get("underdog", [])[:10]:
+            st.markdown(f"**{n['headline']}**")
+            if n.get("link"):
+                st.markdown(f"[Read more]({n['link']})")
+            st.divider()
+    with col3:
+        st.subheader("ESPN")
+        for n in by_source.get("espn", [])[:10]:
+            st.markdown(f"**{n['headline']}**")
+            if n.get("link"):
+                st.markdown(f"[Read more]({n['link']})")
+            st.divider()
 
 st.divider()
 with st.expander("Export context for Claude / Cursor chat"):

@@ -272,6 +272,27 @@ def ask(question: str = typer.Argument(..., help="Your question for the AI analy
 
 
 @app.command()
+def news():
+    """Live fantasy news from Rotowire, Underdog NFL, and ESPN."""
+    from src.news import FantasyNewsClient
+
+    client = FantasyNewsClient()
+    try:
+        by_source = client.get_news_by_source()
+    finally:
+        client.close()
+
+    for label, key in [("Rotowire NFL", "rotowire"), ("Underdog NFL", "underdog"), ("ESPN", "espn")]:
+        items = by_source.get(key, [])
+        console.print(Panel(f"{len(items)} headlines", title=label, border_style="cyan"))
+        for n in items[:8]:
+            console.print(f"  • {n['headline']}")
+            if n.get("description") and key == "rotowire":
+                console.print(f"    [dim]{n['description'][:120]}[/dim]")
+        console.print()
+
+
+@app.command()
 def report():
     """Full dynasty report: overview, grades, sells, trades, waivers."""
     analyst = DynastyAnalyst()

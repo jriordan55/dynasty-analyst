@@ -14,7 +14,7 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
-from src.news import EspnNewsClient
+from src.news import EspnNewsClient, FantasyNewsClient
 from src.sleeper import SleeperClient
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,21 +163,28 @@ class DynastyAnalyst:
         sells = self.sell_candidates()
         trades = self.trade_targets()
         waivers = self.waiver_targets()
-        news = self.news.get_news(limit=15)
         injuries = self.news.get_injuries()[:20]
 
+        my_needs = overview.get("my_needs")
         lines = [
             "# Dynasty Fantasy Football Analysis Context",
             f"League format: {self.config.get('format', 'dynasty')} {self.config.get('scoring', 'ppr')}",
             f"My team: {overview['my_team']} ({overview['record']})",
             "",
             "## My Positional Needs",
-            f"Desperate for: {', '.join(overview['my_needs'].desperate_for) or 'None'}",
-            f"Starter gaps: {overview['my_needs'].starter_gaps}",
-            f"Surplus: {overview['my_needs'].surplus}",
+        ]
+        if my_needs:
+            lines.extend([
+                f"Desperate for: {', '.join(my_needs.desperate_for) or 'None'}",
+                f"Starter gaps: {my_needs.starter_gaps}",
+                f"Surplus: {my_needs.surplus}",
+            ])
+        else:
+            lines.append("Set username to see personalized needs.")
+        lines.extend([
             "",
             "## League Manager Profiles (Trade Leverage)",
-        ]
+        ])
 
         for team in overview["all_teams"]:
             if team["manager"] == overview["my_team"]:
@@ -210,9 +217,18 @@ class DynastyAnalyst:
         for w in waivers[:10]:
             lines.append(f"- {w.player} ({w.position}, ADP {w.adp}): {w.reason}")
 
-        lines.extend(["", "## Live News Headlines"])
-        for n in news[:8]:
-            lines.append(f"- {n['headline']}")
+        lines.extend(["", "## Live News — Rotowire, Underdog & ESPN"])
+        try:
+            by_source = self.news.get_news_by_source()
+            for src, label in [("rotowire", "Rotowire"), ("underdog", "Underdog NFL"), ("espn", "ESPN")]:
+                items = by_source.get(src, [])
+                if items:
+                    lines.append(f"\n### {label}")
+                    for n in items[:6]:
+                        lines.append(f"- [{n['source']}] {n['headline']}")
+        except Exception:
+            for n in self.news.get_news(limit=10):
+                lines.append(f"- [{n.get('source', 'News')}] {n['headline']}")
 
         lines.extend(["", "## Key Injuries"])
         for inj in injuries[:10]:
