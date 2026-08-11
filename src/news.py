@@ -342,6 +342,14 @@ class FantasyNewsClient:
                 continue
         return []
 
+    def injury_for_player(self, player_name: str, injuries: list[dict] | None = None) -> dict | None:
+        injuries = injuries or self.get_injuries()
+        name_lower = player_name.lower()
+        for inj in injuries:
+            if inj["name"].lower() == name_lower or name_lower in inj["name"].lower():
+                return inj
+        return None
+
     def news_for_player(self, player_name: str, news: list[dict] | None = None) -> str | None:
         news = news or self.get_news(limit=80)
         name_parts = [p for p in player_name.lower().split() if len(p) > 2]
@@ -374,3 +382,5 @@ class FantasyNewsClient:
 
 # Single class — do not use a separate EspnNewsClient (breaks Streamlit deploys)
 EspnNewsClient = FantasyNewsClient
+
+__all__ = ["FantasyNewsClient", "EspnNewsClient"]

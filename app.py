@@ -9,7 +9,6 @@ import pandas as pd
 import streamlit as st
 
 from src.analyst import DynastyAnalyst, load_config
-from src.news import FantasyNewsClient
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config" / "league.json"
@@ -30,6 +29,8 @@ def get_config() -> dict:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_news_feeds() -> dict:
+    from src.news import FantasyNewsClient
+
     client = FantasyNewsClient()
     try:
         return client.get_news_by_source()
