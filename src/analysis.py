@@ -90,8 +90,14 @@ def grade_roster(
     news_client=None,
 ) -> list[dict]:
     grades = []
-    news = news_client.get_news(limit=40) if news_client else []
-    injuries = news_client.get_injuries() if news_client else []
+    news = []
+    injuries = []
+    if news_client:
+        try:
+            news = news_client.get_news(limit=40)
+            injuries = news_client.get_injuries()
+        except Exception:
+            pass
 
     for p in team["players"]:
         pos = p["position"]
