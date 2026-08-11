@@ -220,7 +220,7 @@ class DynastyAnalyst:
         lines.extend(["", "## Live News — Rotowire, Underdog & ESPN"])
         try:
             by_source = self.news.get_news_by_source()
-            for src, label in [("rotowire", "Rotowire"), ("underdog", "Underdog NFL"), ("espn", "ESPN")]:
+            for src, label in [("rotowire", "@RotoWireNFL"), ("underdog", "@UnderdogNFL"), ("espn", "ESPN")]:
                 items = by_source.get(src, [])
                 if items:
                     lines.append(f"\n### {label}")

@@ -86,8 +86,8 @@ Or use an invite link — the inviter's current-season league is resolved automa
 
 - [Sleeper API](https://docs.sleeper.app/) — rosters, trending adds/drops
 - [4for4 ADP](https://www.4for4.com/adp) — market values (`data/adp.json`)
-- [Rotowire NFL RSS](https://www.rotowire.com/rss/news.php?sport=NFL) — player news & injury updates
-- [Underdog NFL blog RSS](https://underblog.underdogfantasy.com/feed) — fantasy analysis & rankings
+- [@RotoWireNFL](https://x.com/RotoWireNFL) — live player news & injury updates on X
+- [@UnderdogNFL](https://x.com/UnderdogNFL) — breaking NFL fantasy news on X
 - [ESPN](https://site.api.espn.com/) — breaking news & official injury reports
 
 Refresh ADP: drop updated 4for4 export into `data/adp-source.md`, then run `python -m src.cli refresh-adp-cmd`.

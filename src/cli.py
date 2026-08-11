@@ -282,13 +282,18 @@ def news():
     finally:
         client.close()
 
-    for label, key in [("Rotowire NFL", "rotowire"), ("Underdog NFL", "underdog"), ("ESPN", "espn")]:
+    for label, key in [
+        ("@RotoWireNFL", "rotowire"),
+        ("@UnderdogNFL", "underdog"),
+        ("ESPN", "espn"),
+    ]:
         items = by_source.get(key, [])
         console.print(Panel(f"{len(items)} headlines", title=label, border_style="cyan"))
         for n in items[:8]:
-            console.print(f"  • {n['headline']}")
-            if n.get("description") and key == "rotowire":
-                console.print(f"    [dim]{n['description'][:120]}[/dim]")
+            headline = n["headline"].encode("ascii", "replace").decode("ascii")
+            console.print(f"  - {headline}")
+            if n.get("link"):
+                console.print(f"    [dim]{n['link']}[/dim]")
         console.print()
 
 

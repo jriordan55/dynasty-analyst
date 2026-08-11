@@ -34,7 +34,7 @@ st.set_page_config(
 )
 
 st.title("Dynasty Fantasy Football Analyst")
-st.caption("Sleeper league sync · 4for4 ADP · Rotowire · Underdog NFL · ESPN live news")
+st.caption("Sleeper · 4for4 ADP · @RotoWireNFL · @UnderdogNFL · ESPN")
 
 with st.sidebar:
     st.header("League Setup")
@@ -74,8 +74,8 @@ with st.sidebar:
     st.markdown("- [Find league ID on Sleeper](https://sleeper.app)")
     st.markdown("- [4for4 ADP rankings](https://www.4for4.com/adp)")
 
-    st.markdown("- [Rotowire NFL news](https://www.rotowire.com/football/news.php)")
-    st.markdown("- [Underdog NFL blog](https://underblog.underdogfantasy.com)")
+    st.markdown("- [@RotoWireNFL on X](https://x.com/RotoWireNFL)")
+    st.markdown("- [@UnderdogNFL on X](https://x.com/UnderdogNFL)")
 
 if not CONFIG_PATH.exists() or not get_config().get("league_id") or get_config().get("league_id") == "YOUR_LEAGUE_ID":
     st.info("Enter your Sleeper league ID and username in the sidebar, then click **Save & Sync**.")
@@ -182,7 +182,8 @@ with tab_news:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.subheader("Rotowire NFL")
+        st.subheader("@RotoWireNFL")
+        st.caption("[x.com/RotoWireNFL](https://x.com/RotoWireNFL)")
         for n in by_source.get("rotowire", [])[:10]:
             st.markdown(f"**{n['headline']}**")
             if n.get("description"):
@@ -191,7 +192,8 @@ with tab_news:
                 st.markdown(f"[Read more]({n['link']})")
             st.divider()
     with col2:
-        st.subheader("Underdog NFL")
+        st.subheader("@UnderdogNFL")
+        st.caption("[x.com/UnderdogNFL](https://x.com/UnderdogNFL)")
         for n in by_source.get("underdog", [])[:10]:
             st.markdown(f"**{n['headline']}**")
             if n.get("link"):

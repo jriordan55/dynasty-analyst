@@ -7,7 +7,17 @@ from email.utils import parsedate_to_datetime
 
 import httpx
 
-# Public RSS feeds — no API key required
+# X / Twitter accounts (primary news sources)
+ROTOWIRE_X_HANDLE = "RotoWireNFL"
+UNDERDOG_X_HANDLE = "UnderdogNFL"
+ROTOWIRE_X_URL = f"https://x.com/{ROTOWIRE_X_HANDLE}"
+UNDERDOG_X_URL = f"https://x.com/{UNDERDOG_X_HANDLE}"
+
+# Nitter RSS mirrors for X timelines (no API key required)
+ROTOWIRE_X_RSS = f"https://nitter.net/{ROTOWIRE_X_HANDLE}/rss"
+UNDERDOG_X_RSS = f"https://nitter.net/{UNDERDOG_X_HANDLE}/rss"
+
+# Fallback feeds if X mirror is unavailable
 ROTOWIRE_NFL_RSS = "https://www.rotowire.com/rss/news.php?sport=NFL"
 UNDERDOG_NFL_RSS = "https://underblog.underdogfantasy.com/feed"
 
@@ -18,8 +28,57 @@ NFL_KEYWORDS = re.compile(
     re.I,
 )
 
+_DC = "{http://purl.org/dc/elements/1.1/}"
 
-def _parse_rss(xml_text: str, source: str) -> list[dict]:
+
+def _strip_html(text: str) -> str:
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
+def _to_x_link(link: str, handle: str) -> str:
+    match = re.search(r"/status/(\d+)", link)
+    if match:
+        return f"https://x.com/{handle}/status/{match.group(1)}"
+    return f"https://x.com/{handle}"
+
+
+def _parse_pub_date(pub_raw: str) -> tuple[str, float]:
+    if not pub_raw:
+        return "", 0.0
+    try:
+        dt = parsedate_to_datetime(pub_raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat(), dt.timestamp()
+    except (ValueError, TypeError):
+        return pub_raw, 0.0
+
+
+def _player_from_headline(headline: str) -> str:
+    if ":" in headline:
+        candidate = headline.split(":", 1)[0].strip()
+        if 2 <= len(candidate.split()) <= 4:
+            return candidate
+    return ""
+
+
+def _is_actionable_post(headline: str) -> bool:
+    """Skip replies, retweets, and link-only noise from X timelines."""
+    if not headline or len(headline) < 12:
+        return False
+    if re.match(r"^R to @", headline, re.I):
+        return False
+    if re.match(r"^RT @", headline, re.I):
+        return False
+    if headline.startswith("@") and ":" not in headline:
+        return False
+    # Skip truncated link-only replies
+    if "rotowire.com/football/player" in headline and len(headline) < 60:
+        return False
+    return True
+
+
+def _parse_rss(xml_text: str, source: str, x_handle: str | None = None) -> list[dict]:
     items: list[dict] = []
     try:
         root = ET.fromstring(xml_text)
@@ -31,37 +90,30 @@ def _parse_rss(xml_text: str, source: str) -> list[dict]:
         return items
 
     for item in channel.findall("item"):
-        title = (item.findtext("title") or "").strip()
-        link = (item.findtext("link") or "").strip()
-        description = (item.findtext("description") or "").strip()
-        pub_raw = item.findtext("pubDate") or item.findtext("{http://purl.org/dc/elements/1.1/}date") or ""
-        published = pub_raw
-        sort_ts = 0.0
-        if pub_raw:
-            try:
-                dt = parsedate_to_datetime(pub_raw)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                sort_ts = dt.timestamp()
-                published = dt.isoformat()
-            except (ValueError, TypeError):
-                pass
+        title = _strip_html(item.findtext("title") or "")
+        raw_link = (item.findtext("link") or "").strip()
+        description = _strip_html(item.findtext("description") or "")
+        pub_raw = item.findtext("pubDate") or item.findtext(f"{_DC}date") or ""
+        published, sort_ts = _parse_pub_date(pub_raw)
 
-        # Rotowire titles often "Player Name: headline"
-        player = ""
-        if source == "Rotowire" and ":" in title:
-            player = title.split(":", 1)[0].strip()
+        link = _to_x_link(raw_link, x_handle) if x_handle else raw_link
+        headline = title or description
+        player = _player_from_headline(headline)
 
         items.append({
             "source": source,
-            "headline": title,
-            "description": description,
+            "headline": headline,
+            "description": description if description != headline else "",
             "published": published,
             "sort_ts": sort_ts,
             "link": link,
             "player": player,
             "keywords": [],
+            "x_handle": x_handle or "",
         })
+
+    if x_handle:
+        items = [i for i in items if _is_actionable_post(i["headline"])]
     return items
 
 
@@ -71,14 +123,14 @@ def _is_nfl_fantasy(item: dict) -> bool:
 
 
 class FantasyNewsClient:
-    """Aggregate fantasy news from ESPN, Rotowire, and Underdog NFL."""
+    """Aggregate fantasy news from @RotoWireNFL, @UnderdogNFL, and ESPN."""
 
     ESPN_NEWS_URL = "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/news"
     ESPN_INJURIES_URL = "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/injuries"
 
     def __init__(self) -> None:
         self._client = httpx.Client(
-            timeout=20.0,
+            timeout=25.0,
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -89,6 +141,28 @@ class FantasyNewsClient:
             },
             follow_redirects=True,
         )
+
+    def _fetch_rss_with_fallback(
+        self,
+        primary_url: str,
+        fallback_url: str,
+        source: str,
+        x_handle: str,
+        limit: int,
+    ) -> list[dict]:
+        for url in (primary_url, fallback_url):
+            try:
+                resp = self._client.get(url)
+                resp.raise_for_status()
+                handle = x_handle if url == primary_url else None
+                label = f"@{x_handle}" if handle else source
+                items = _parse_rss(resp.text, label, handle)
+                if items:
+                    items.sort(key=lambda x: x["sort_ts"], reverse=True)
+                    return items[:limit]
+            except httpx.HTTPError:
+                continue
+        return []
 
     def get_espn_news(self, limit: int = 25) -> list[dict]:
         resp = self._client.get(self.ESPN_NEWS_URL, params={"limit": limit})
@@ -112,32 +186,32 @@ class FantasyNewsClient:
                 "link": a.get("links", {}).get("web", {}).get("href", ""),
                 "player": "",
                 "keywords": [k.get("displayName", "") for k in a.get("categories", [])],
+                "x_handle": "",
             })
         return results
 
-    def get_rotowire_news(self, limit: int = 30) -> list[dict]:
-        resp = self._client.get(ROTOWIRE_NFL_RSS)
-        resp.raise_for_status()
-        items = _parse_rss(resp.text, "Rotowire")
-        items.sort(key=lambda x: x["sort_ts"], reverse=True)
-        return items[:limit]
+    def get_rotowire_news(self, limit: int = 20) -> list[dict]:
+        """Live posts from @RotoWireNFL on X."""
+        return self._fetch_rss_with_fallback(
+            ROTOWIRE_X_RSS, ROTOWIRE_NFL_RSS, "Rotowire", ROTOWIRE_X_HANDLE, limit
+        )
 
-    def get_underdog_news(self, limit: int = 20, nfl_only: bool = True) -> list[dict]:
-        resp = self._client.get(UNDERDOG_NFL_RSS)
-        resp.raise_for_status()
-        items = _parse_rss(resp.text, "Underdog")
-        if nfl_only:
+    def get_underdog_news(self, limit: int = 20) -> list[dict]:
+        """Live posts from @UnderdogNFL on X."""
+        items = self._fetch_rss_with_fallback(
+            UNDERDOG_X_RSS, UNDERDOG_NFL_RSS, "Underdog", UNDERDOG_X_HANDLE, limit
+        )
+        # Blog fallback may include non-NFL posts
+        if items and not items[0].get("x_handle"):
             items = [i for i in items if _is_nfl_fantasy(i)]
-        items.sort(key=lambda x: x["sort_ts"], reverse=True)
         return items[:limit]
 
     def get_news(self, limit: int = 30) -> list[dict]:
-        """Merged feed from ESPN + Rotowire + Underdog, newest first."""
         merged: list[dict] = []
         for fetch in (
-            lambda: self.get_espn_news(limit=limit),
             lambda: self.get_rotowire_news(limit=limit),
             lambda: self.get_underdog_news(limit=limit),
+            lambda: self.get_espn_news(limit=limit),
         ):
             try:
                 merged.extend(fetch())
@@ -149,9 +223,9 @@ class FantasyNewsClient:
     def get_news_by_source(self) -> dict[str, list[dict]]:
         result: dict[str, list[dict]] = {}
         for key, fetch in [
-            ("espn", lambda: self.get_espn_news(limit=15)),
             ("rotowire", lambda: self.get_rotowire_news(limit=20)),
-            ("underdog", lambda: self.get_underdog_news(limit=15)),
+            ("underdog", lambda: self.get_underdog_news(limit=20)),
+            ("espn", lambda: self.get_espn_news(limit=15)),
         ]:
             try:
                 result[key] = fetch()
@@ -193,7 +267,6 @@ class FantasyNewsClient:
         return None
 
     def player_news(self, player_name: str, limit: int = 5) -> list[dict]:
-        """All recent news mentioning a player across sources."""
         news = self.get_news(limit=100)
         name_parts = [p for p in player_name.lower().split() if len(p) > 2]
         hits = []
@@ -209,5 +282,4 @@ class FantasyNewsClient:
         self._client.close()
 
 
-# Backward-compatible alias
 EspnNewsClient = FantasyNewsClient
