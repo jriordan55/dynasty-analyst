@@ -287,19 +287,18 @@ def _render_news_table(df: pd.DataFrame, height: int = 360) -> None:
 def _draft_context(analyst: DynastyAnalyst, config: dict) -> dict:
     """Shared draft state used across Home and Draft tabs."""
     draft = analyst.draft_state()
-    has_keepers = analyst.has_keepers()
-    keepers = analyst.get_keepers() if has_keepers else []
+    keepers = analyst.get_keepers()
     my_slot = (draft or {}).get("my_slot")
     teams = (draft or {}).get("teams") or len((draft or {}).get("draft_order") or {}) or 12
     recs, next_picks, target_pick = analyst.pick_recommendations(
         keeper_names=keepers, limit=5, draft=draft, my_slot=my_slot,
     )
     upside = analyst.upside_targets(keeper_names=keepers, limit=12)
-    plan = analyst.draft_plan(keepers if has_keepers else None)
+    plan = analyst.draft_plan(keepers)
     return {
         "draft": draft,
         "keepers": keepers,
-        "has_keepers": has_keepers,
+        "show_keeper_ui": analyst.show_keeper_ui(),
         "my_slot": my_slot,
         "teams": teams,
         "recs": recs,
@@ -347,8 +346,9 @@ with st.sidebar:
                 try:
                     with st.spinner("Syncing from Sleeper..."):
                         analyst = DynastyAnalyst(updated)
-                        analyst.sync()
+                        snapshot = analyst.sync()
                         analyst.news.close()
+                    save_config({**updated, **analyst.config})
                     load_grades.clear()
                     load_live_draft.clear()
                     st.success("League synced!")
@@ -363,6 +363,7 @@ with st.sidebar:
                 analyst.sync()
                 analyst.refresh_draft()
                 analyst.news.close()
+            save_config({**get_config(), **analyst.config})
             load_grades.clear()
             load_live_draft.clear()
             st.success("Data refreshed.")
@@ -405,7 +406,7 @@ ctx = _draft_context(analyst, config)
 draft = ctx["draft"]
 teams = ctx["teams"]
 my_slot = ctx["my_slot"]
-has_keepers = ctx["has_keepers"]
+has_keepers = ctx["show_keeper_ui"]
 
 with st.sidebar:
     st.divider()
@@ -432,25 +433,16 @@ tab_home, tab_draft, tab_team, tab_league, tab_news = st.tabs(
 with tab_home:
     try:
         my = overview.get("my_needs")
-        if has_keepers:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Draft slot", my_slot or "—")
-            c2.metric(
-                "Next pick",
-                format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
-            )
-            c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
-            c4.metric("Keepers", f"{len(ctx['keepers'])}/{ctx['plan'].max_keepers}")
-            if ctx["keepers"]:
-                st.markdown("**Keepers:** " + " · ".join(f"`{k}`" for k in ctx["keepers"]))
-        else:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Draft slot", my_slot or "—")
-            c2.metric(
-                "Next pick",
-                format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
-            )
-            c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Draft slot", my_slot or "—")
+        c2.metric(
+            "Next pick",
+            format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
+        )
+        c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
+
+        if ctx["keepers"]:
+            st.caption("Draft keepers (from Sleeper): " + " · ".join(f"`{k}`" for k in ctx["keepers"]))
 
         st.divider()
         left, right = st.columns([3, 2])

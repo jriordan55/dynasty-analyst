@@ -87,14 +87,32 @@ def _drafted_names(draft: dict | None) -> set[str]:
 
 
 def league_has_keepers(config: dict, snapshot: dict | None = None) -> bool:
-    """True when Sleeper league allows keepers (max_keepers > 0)."""
+    """True when Sleeper league is a keeper format with keeper slots."""
+    settings = {}
     if snapshot:
         settings = (snapshot.get("league") or {}).get("settings") or {}
+    elif config.get("league", {}).get("settings"):
+        settings = config["league"]["settings"]
+
+    if settings:
+        league_type = settings.get("type")
+        # Sleeper: 0=redraft, 1=keeper, 2=dynasty
+        if league_type is not None and int(league_type) != 1:
+            return False
         if settings.get("max_keepers") is not None:
             return int(settings.get("max_keepers") or 0) > 0
-    if config.get("max_keepers") is not None:
-        return int(config.get("max_keepers") or 0) > 0
+        return False
+
+    # No Sleeper data yet — do not show keeper UI from stale local config
     return False
+
+
+def keeper_names_from_draft(snapshot: dict, my_team: dict) -> list[str]:
+    """Keeper players already assigned in the Sleeper draft."""
+    draft = snapshot.get("draft")
+    if not draft:
+        return []
+    return _keeper_names_for_roster(draft, my_team.get("roster_id"))
 
 
 def build_roster_draft_plan(my_team: dict, config: dict) -> KeeperPlan:
@@ -245,7 +263,7 @@ def build_draft_board(
     if not my_team:
         return []
 
-    if league_has_keepers(config, snapshot) and keeper_names:
+    if keeper_names:
         virtual = _virtual_team_after_keepers(my_team, set(keeper_names))
     else:
         virtual = my_team
