@@ -134,7 +134,7 @@ def enrich_adp_map(adp_map: dict[str, Player], sleeper_players: dict) -> dict[st
 
 
 class PlayerIntel:
-    """Merged external signals: ESPN injuries, Sleeper metadata, trending, news."""
+    """Merged external signals: Rotowire news, Sleeper metadata, trending."""
 
     def __init__(
         self,
@@ -160,7 +160,6 @@ class PlayerIntel:
         news: list[dict] = []
         if news_client:
             try:
-                injuries = news_client.get_injuries()
                 news = news_client.get_news(limit=80)
             except Exception:
                 pass

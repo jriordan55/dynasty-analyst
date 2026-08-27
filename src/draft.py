@@ -14,6 +14,13 @@ from src.models import (
 )
 
 
+def is_pre_draft(draft: dict | None) -> bool:
+    """True before the league draft starts — roster-fit scoring is post-draft only."""
+    if not draft:
+        return True
+    return draft.get("status") in (None, "", "pre_draft")
+
+
 def pick_no_for_slot_round(slot: int, round_no: int, teams: int) -> int:
     """Snake draft pick number for a given slot and round."""
     if round_no % 2 == 1:
@@ -269,6 +276,7 @@ def build_draft_board(
         virtual = my_team
     needs = analyze_team_needs(virtual, config)
     pos_counts = dict(needs.position_counts)
+    pre_draft = is_pre_draft(draft)
 
     entries: list[DraftBoardEntry] = []
     for player in sorted(adp_map.values(), key=lambda p: p.adp or 999):
@@ -276,12 +284,15 @@ def build_draft_board(
             continue
         if player.position not in CORE_POSITIONS:
             continue
-        fit, reason = roster_fit_score(player.position, player.adp, needs, pos_counts)
-        if scarcity.get(player.position, 0) > 15:
-            fit += 8
-            reason = f"{reason}; {player.position} run" if reason else f"{player.position} run"
-        if intel:
-            fit, reason = intel.adjust_fit_score(player.name, player.position, fit, reason)
+        if pre_draft:
+            fit, reason = 0.0, ""
+        else:
+            fit, reason = roster_fit_score(player.position, player.adp, needs, pos_counts)
+            if scarcity.get(player.position, 0) > 15:
+                fit += 8
+                reason = f"{reason}; {player.position} run" if reason else f"{player.position} run"
+            if intel:
+                fit, reason = intel.adjust_fit_score(player.name, player.position, fit, reason)
         flag = intel.flags_text(player.name, player.position) if intel else _news_flags_for_player(player.name, news, injuries)
         adp_val = player.adp
         upside_score = 0.0
@@ -306,7 +317,10 @@ def build_draft_board(
             )
         )
 
-    entries.sort(key=lambda e: (-e.fit_score, e.adp or 999))
+    if pre_draft:
+        entries.sort(key=lambda e: (e.adp or 999, -e.upside_score))
+    else:
+        entries.sort(key=lambda e: (-e.fit_score, e.adp or 999))
     return entries[:limit]
 
 
@@ -351,6 +365,7 @@ def recommend_picks(
     target_pick: int | None = None,
     on_clock: bool = False,
     teams: int = 12,
+    pre_draft: bool = False,
 ) -> list[PickRecommendation]:
     """Recommend picks — optionally scoped to a snake pick number."""
     if target_pick:
@@ -370,6 +385,8 @@ def recommend_picks(
         reach_penalty = 0
         if target_pick and e.adp and e.adp < target_pick - 12:
             reach_penalty = 20
+        if pre_draft:
+            return (e.adp or 999, -e.upside_score)
         return (-(e.fit_score + e.upside_score * 0.3 - reach_penalty), e.adp or 999)
 
     recs: list[PickRecommendation] = []
@@ -381,10 +398,10 @@ def recommend_picks(
         if "Injury: Out" in entry.news_flag or "Injury: Doubtful" in entry.news_flag:
             continue
         pos_count = seen_pos.get(entry.position, 0)
-        if pos_count >= 2 and entry.fit_score < 70 and not on_clock:
+        if not pre_draft and pos_count >= 2 and entry.fit_score < 70 and not on_clock:
             continue
 
-        reason = entry.fit_reason
+        reason = "" if pre_draft else entry.fit_reason
         if entry.upside_note:
             reason = f"{reason} · {entry.upside_note}" if reason else entry.upside_note
         if entry.news_flag:
@@ -451,7 +468,7 @@ def recommend_for_my_slot(
     """Pick recommendations tied to your snake draft slot."""
     teams = draft_teams(draft, teams)
     if not my_slot:
-        return recommend_picks(board, limit=limit), [], None
+        return recommend_picks(board, limit=limit, pre_draft=is_pre_draft(draft)), [], None
 
     current_pick = 1
     if draft:
@@ -465,6 +482,7 @@ def recommend_for_my_slot(
 
     recs = recommend_picks(
         board, limit=limit, target_pick=target, on_clock=on_clock, teams=teams,
+        pre_draft=is_pre_draft(draft),
     )
     next_picks = upcoming_pick_numbers(my_slot, teams, current_pick, count=4)
     return recs, next_picks, target

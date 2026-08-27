@@ -146,7 +146,7 @@ def _dedupe_news(items: list[dict]) -> list[dict]:
 
 
 class FantasyNewsClient:
-    """Fantasy news from @RotoWireNFL, @UnderdogNFL, and ESPN with cloud-safe fallbacks."""
+    """Fantasy news from @RotoWireNFL (RSS + X mirrors)."""
 
     def __init__(self) -> None:
         self._client = httpx.Client(
@@ -156,8 +156,7 @@ class FantasyNewsClient:
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 ),
-                "Accept": "application/json,text/xml,application/xml,*/*",
-                "Referer": "https://www.espn.com/",
+                "Accept": "text/xml,application/xml,*/*",
             },
             follow_redirects=True,
         )
@@ -284,36 +283,18 @@ class FantasyNewsClient:
         return results
 
     def get_news(self, limit: int = 30) -> list[dict]:
-        merged: list[dict] = []
-        for fetch in (
-            self.get_rotowire_news,
-            self.get_underdog_news,
-            self.get_espn_news,
-        ):
-            try:
-                merged.extend(fetch(limit=limit))
-            except Exception:
-                continue
-        return _dedupe_news(merged)[:limit]
+        try:
+            return self.get_rotowire_news(limit=limit)
+        except Exception:
+            return []
 
     def get_news_by_source(self) -> dict[str, list[dict]]:
         """Always returns all keys — never raises."""
-        result: dict[str, list[dict]] = {
-            "rotowire": [],
-            "underdog": [],
-            "espn": [],
-            "injuries": [],
-        }
-        for key, fetch in [
-            ("rotowire", lambda: self.get_rotowire_news(limit=15)),
-            ("underdog", lambda: self.get_underdog_news(limit=15)),
-            ("espn", lambda: self.get_espn_news(limit=15)),
-            ("injuries", lambda: self.get_injuries(limit=20)),
-        ]:
-            try:
-                result[key] = fetch()
-            except Exception:
-                result[key] = []
+        result: dict[str, list[dict]] = {"rotowire": [], "injuries": []}
+        try:
+            result["rotowire"] = self.get_rotowire_news(limit=20)
+        except Exception:
+            result["rotowire"] = []
         return result
 
     def get_injuries(self, limit: int = 50) -> list[dict]:

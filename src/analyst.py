@@ -382,26 +382,16 @@ class DynastyAnalyst:
         for w in waivers[:10]:
             lines.append(f"- {w.player} ({w.position}, ADP {w.adp}): {w.reason}")
 
-        lines.extend(["", "## Live News — Rotowire, Underdog & ESPN"])
+        lines.extend(["", "## Live News — @RotoWireNFL"])
         try:
             by_source = self.news.get_news_by_source()
-            for src, label in [("rotowire", "@RotoWireNFL"), ("underdog", "@UnderdogNFL"), ("espn", "ESPN")]:
-                items = by_source.get(src, [])
-                if items:
-                    lines.append(f"\n### {label}")
-                    for n in items[:6]:
-                        lines.append(f"- [{n['source']}] {n['headline']}")
+            items = by_source.get("rotowire", [])
+            if items:
+                for n in items[:10]:
+                    lines.append(f"- [{n['source']}] {n['headline']}")
         except Exception:
             for n in self.news.get_news(limit=10):
                 lines.append(f"- [{n.get('source', 'News')}] {n['headline']}")
-
-        lines.extend(["", "## Key Injuries (ESPN)"])
-        try:
-            injuries = self.news.get_injuries()[:15]
-        except Exception:
-            injuries = []
-        for inj in injuries[:10]:
-            lines.append(f"- {inj['name']} ({inj['team']}): {inj['status']} — {inj.get('detail', '')}")
 
         return "\n".join(lines)
 

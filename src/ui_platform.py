@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from src.adp import load_adp
-from src.draft import format_pick_label
+from src.draft import format_pick_label, is_pre_draft
 from src.fantasycalc import FantasyCalcClient
 from src.platform import (
     aging_curve,
@@ -170,15 +170,24 @@ def render_rankings(analyst, config: dict) -> None:
     elif section == "Draft Big Board":
         keepers = analyst.get_keepers()
         board = analyst.draft_board(keeper_names=keepers, limit=75)
-        st.caption("Sorted by roster fit for your league build")
-        df = pd.DataFrame([{
-            "Player": b.player,
-            "Pos": b.position,
-            "ADP": _cell(b.adp),
-            "Fit": b.fit_score,
-            "Upside": b.upside_score or "—",
-        } for b in board])
-        st.dataframe(df, width="stretch", hide_index=True, height=520)
+        draft = snapshot.get("draft")
+        show_fit = not is_pre_draft(draft)
+        st.caption(
+            "Sorted by ADP and upside." if not show_fit
+            else "Sorted by roster fit for your league build"
+        )
+        rows = []
+        for b in board:
+            row = {
+                "Player": b.player,
+                "Pos": b.position,
+                "ADP": _cell(b.adp),
+                "Upside": b.upside_score or "—",
+            }
+            if show_fit:
+                row["Fit"] = b.fit_score
+            rows.append(row)
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=520)
 
     elif section == "Pick Rankings":
         rows = pick_rankings({**config, "league": snapshot.get("league") or {}})
@@ -382,10 +391,15 @@ def render_tools(analyst, config: dict, ctx: dict) -> None:
             pass
 
     elif section == "Mock Draft":
-        st.caption("Quick mock from your draft board — top fits at each of your snake picks")
+        draft = ctx.get("draft") or {}
+        show_fit = not is_pre_draft(draft)
+        st.caption(
+            "Top available by ADP at each of your snake picks."
+            if not show_fit else
+            "Quick mock from your draft board — top fits at each of your snake picks"
+        )
         keepers = ctx.get("keepers") or []
         board = analyst.draft_board(keeper_names=keepers, limit=60)
-        draft = ctx.get("draft") or {}
         teams = ctx.get("teams") or 12
         my_slot = ctx.get("my_slot")
         _, next_picks, _ = analyst.pick_recommendations(keeper_names=keepers, limit=5, draft=draft, my_slot=my_slot)
@@ -397,12 +411,15 @@ def render_tools(analyst, config: dict, ctx: dict) -> None:
                 break
             choice = avail[0]
             picks_taken.add(choice.player)
-            mock.append({
+            row = {
                 "Pick": format_pick_label(pick_no, teams),
                 "Player": choice.player,
                 "Pos": choice.position,
-                "Fit": choice.fit_score,
-            })
+                "ADP": _cell(choice.adp),
+            }
+            if show_fit:
+                row["Fit"] = choice.fit_score
+            mock.append(row)
         st.dataframe(pd.DataFrame(mock), width="stretch", hide_index=True)
 
     elif section == "2026 Season Prep":

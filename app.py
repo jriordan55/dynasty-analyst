@@ -9,7 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from src.analyst import DynastyAnalyst, load_config
-from src.draft import format_pick_label
+from src.draft import format_pick_label, is_pre_draft
 from src.news import get_news_client
 from src.ui_platform import (
     inject_dynatyze_styles,
@@ -71,7 +71,7 @@ def load_news_feeds() -> dict:
     try:
         return client.get_news_by_source()
     except Exception:
-        return {"rotowire": [], "underdog": [], "espn": [], "injuries": []}
+        return {"rotowire": [], "injuries": []}
     finally:
         client.close()
 
@@ -128,7 +128,7 @@ def _safe_dataframe(df: pd.DataFrame, height: int | None = None) -> None:
     st.dataframe(df.astype(str), **kwargs)
 
 
-def _render_pick_cards(recs, *, highlight_first: bool = False) -> None:
+def _render_pick_cards(recs, *, highlight_first: bool = False, show_fit: bool = True) -> None:
     if not recs:
         st.info("No recommendations yet — sync your league.")
         return
@@ -145,10 +145,15 @@ def _render_pick_cards(recs, *, highlight_first: bool = False) -> None:
                     f"**{i}. {r.player}** {_pos_badge(r.position)}",
                     unsafe_allow_html=True,
                 )
-            m1, m2, m3 = st.columns(3)
-            m1.metric("ADP", _cell(r.adp))
-            m2.metric("Fit", f"{r.fit_score:.0f}")
-            m3.metric("Upside", f"{r.upside_score:.0f}" if r.upside_score else "—")
+            if show_fit:
+                m1, m2, m3 = st.columns(3)
+                m1.metric("ADP", _cell(r.adp))
+                m2.metric("Fit", f"{r.fit_score:.0f}")
+                m3.metric("Upside", f"{r.upside_score:.0f}" if r.upside_score else "—")
+            else:
+                m1, m2 = st.columns(2)
+                m1.metric("ADP", _cell(r.adp))
+                m2.metric("Upside", f"{r.upside_score:.0f}" if r.upside_score else "—")
             st.caption(_truncate(r.reason, 130))
 
 
@@ -168,11 +173,11 @@ def _render_upside_cards(targets, limit: int = 6) -> None:
                 st.caption(_truncate(u.insight, 90))
 
 
-def _board_insight(entry) -> str:
+def _board_insight(entry, *, show_fit: bool = True) -> str:
     parts = []
     if entry.upside_note:
         parts.append(_first_sentence(entry.upside_note))
-    elif entry.fit_reason:
+    elif show_fit and entry.fit_reason:
         parts.append(_first_sentence(entry.fit_reason))
     if entry.news_flag and entry.news_flag != "—":
         parts.append(entry.news_flag.split(" · ")[0])
@@ -208,11 +213,7 @@ def _match_roster_players(item: dict, roster_names: set[str]) -> list[str]:
 
 def _build_news_table(by_source: dict, roster_names: set[str]) -> pd.DataFrame:
     rows: list[dict] = []
-    source_labels = {
-        "rotowire": "@RotoWireNFL",
-        "underdog": "@UnderdogNFL",
-        "espn": "ESPN",
-    }
+    source_labels = {"rotowire": "@RotoWireNFL"}
     for key, label in source_labels.items():
         for item in by_source.get(key, []):
             players = _match_roster_players(item, roster_names)
@@ -410,6 +411,7 @@ draft = ctx["draft"]
 teams = ctx["teams"]
 my_slot = ctx["my_slot"]
 has_keepers = ctx["show_keeper_ui"]
+show_fit = not is_pre_draft(draft)
 
 with st.sidebar:
     st.divider()
@@ -458,7 +460,7 @@ with tab_home:
             if ctx["next_picks"]:
                 upcoming = " → ".join(p.split(" (")[0] for p in [format_pick_label(p, teams) for p in ctx["next_picks"][:3]])
                 st.caption(f"Upcoming: {upcoming}")
-            _render_pick_cards(ctx["recs"][:3])
+            _render_pick_cards(ctx["recs"][:3], show_fit=show_fit)
 
         with right:
             st.subheader("Breakout watch")
@@ -513,13 +515,17 @@ with tab_draft:
 
         if view == "My picks":
             st.subheader("Pick recommendations")
-            st.caption("Ranked for your roster holes, ADP window at your next snake pick, and upside.")
+            st.caption(
+                "Ranked by ADP window and upside at your next snake pick."
+                if not show_fit else
+                "Ranked for your roster holes, ADP window at your next snake pick, and upside."
+            )
             if my_slot and ctx["next_picks"]:
                 st.info(
                     f"Slot **{my_slot}** · Next picks: "
                     + " · ".join(format_pick_label(p, teams) for p in ctx["next_picks"][:4])
                 )
-            _render_pick_cards(ctx["recs"], highlight_first=True)
+            _render_pick_cards(ctx["recs"], highlight_first=True, show_fit=show_fit)
 
         elif view == "Upside targets":
             st.subheader("High upside & bigger roles")
@@ -541,22 +547,31 @@ with tab_draft:
             if pos_filter != "All":
                 board = [b for b in board if b.position == pos_filter]
 
-            st.caption("Sorted by roster fit. Green rows = strong fit (75+).")
+            st.caption(
+                "Sorted by ADP and upside." if not show_fit
+                else "Sorted by roster fit. Green rows = strong fit (75+)."
+            )
             if not board:
                 st.info("No available players — sync draft or refresh league data.")
             else:
-                bdf = pd.DataFrame([{
-                    "Player": b.player,
-                    "Pos": b.position,
-                    "ADP": _cell(b.adp),
-                    "Fit": b.fit_score,
-                    "Upside": b.upside_score or "—",
-                    "Insight": _board_insight(b),
-                } for b in board[:50]])
+                rows = []
+                for b in board[:50]:
+                    row = {
+                        "Player": b.player,
+                        "Pos": b.position,
+                        "ADP": _cell(b.adp),
+                        "Upside": b.upside_score or "—",
+                        "Insight": _board_insight(b, show_fit=show_fit),
+                    }
+                    if show_fit:
+                        row["Fit"] = b.fit_score
+                    rows.append(row)
+                bdf = pd.DataFrame(rows)
                 styled = bdf.style.apply(
                     lambda row: (
                         ["background-color: #1a4d2e; color: #ecfdf5"] * len(row)
-                        if float(row["Fit"]) >= 75 else [""] * len(row)
+                        if show_fit and "Fit" in row.index and float(row["Fit"]) >= 75
+                        else [""] * len(row)
                     ),
                     axis=1,
                 )
@@ -597,11 +612,11 @@ with tab_draft:
                 )
                 if is_my_pick:
                     st.subheader("Pick now")
-                    _render_pick_cards(live_recs, highlight_first=True)
+                    _render_pick_cards(live_recs, highlight_first=True, show_fit=show_fit)
                 else:
                     label = format_pick_label(live_target, live_teams) if live_target else "your next pick"
                     st.subheader(f"Queue for {label}")
-                    _render_pick_cards(live_recs[:4])
+                    _render_pick_cards(live_recs[:4], show_fit=show_fit)
 
                 picks = live.get("picks", [])
                 if picks:
@@ -878,7 +893,7 @@ with tab_news:
     try:
         section = st.radio(
             "Section",
-            ["Headlines", "Injuries", "Waivers"],
+            ["Headlines", "Waivers"],
             horizontal=True,
             label_visibility="collapsed",
         )
@@ -895,18 +910,12 @@ with tab_news:
         else:
             by_source = load_news_feeds()
             roster_names = _roster_player_names(analyst)
-
-            if section == "Headlines":
-                roster_only = st.toggle("My players only", value=False)
-                news_df = _build_news_table(by_source, roster_names)
-                if roster_only and not news_df.empty:
-                    news_df = news_df[news_df["Your Player"] != "—"]
-                st.caption("Green = mentions someone on your roster.")
-                _render_news_table(news_df)
-            else:
-                inj_df = _build_injury_table(by_source.get("injuries", [])[:40], roster_names)
-                st.caption("Green = your roster.")
-                _render_news_table(inj_df)
+            roster_only = st.toggle("My players only", value=False)
+            news_df = _build_news_table(by_source, roster_names)
+            if roster_only and not news_df.empty:
+                news_df = news_df[news_df["Your Player"] != "—"]
+            st.caption("@RotoWireNFL · Green = mentions someone on your roster.")
+            _render_news_table(news_df)
 
             if st.button("Refresh news"):
                 load_news_feeds.clear()

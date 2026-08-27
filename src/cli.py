@@ -273,7 +273,7 @@ def ask(question: str = typer.Argument(..., help="Your question for the AI analy
 
 @app.command()
 def news():
-    """Live fantasy news from Rotowire, Underdog NFL, and ESPN."""
+    """Live fantasy news from @RotoWireNFL."""
     from src.news import get_news_client
 
     client = get_news_client()
@@ -282,19 +282,13 @@ def news():
     finally:
         client.close()
 
-    for label, key in [
-        ("@RotoWireNFL", "rotowire"),
-        ("@UnderdogNFL", "underdog"),
-        ("ESPN", "espn"),
-    ]:
-        items = by_source.get(key, [])
-        console.print(Panel(f"{len(items)} headlines", title=label, border_style="cyan"))
-        for n in items[:8]:
-            headline = n["headline"].encode("ascii", "replace").decode("ascii")
-            console.print(f"  - {headline}")
-            if n.get("link"):
-                console.print(f"    [dim]{n['link']}[/dim]")
-        console.print()
+    items = by_source.get("rotowire", [])
+    console.print(Panel(f"{len(items)} headlines", title="@RotoWireNFL", border_style="cyan"))
+    for n in items[:12]:
+        headline = n["headline"].encode("ascii", "replace").decode("ascii")
+        console.print(f"  - {headline}")
+        if n.get("link"):
+            console.print(f"    [dim]{n['link']}[/dim]")
 
 
 @app.command()
