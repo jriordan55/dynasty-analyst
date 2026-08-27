@@ -31,7 +31,8 @@ from src.rankings import (
     pick_rankings,
     where_we_disagree,
 )
-from src.trade_calc import evaluate_trade, league_pick_pool, league_player_pool
+from src.draft import format_pick_label, is_pre_draft, league_has_keepers
+from src.trade_calc import evaluate_trade
 
 
 POS_COLORS = {"QB": "#3b82f6", "RB": "#22c55e", "WR": "#a855f7", "TE": "#f59e0b", "PICK": "#94a3b8"}
@@ -458,37 +459,91 @@ def render_tools(analyst, config: dict, ctx: dict) -> None:
 
 def render_trade_calculator(analyst, config: dict) -> None:
     snapshot = analyst._ensure_snapshot()
+    _, my_team = analyst._ensure_loaded()
     fc = _fc_client(analyst, config)
-    pool = league_player_pool(snapshot, fc)
-    picks = league_pick_pool(snapshot, fc)
 
-    st.caption(
-        "Values from [FantasyCalc](https://www.fantasycalc.com/trade-calculator) "
-        f"· {config.get('format', 'dynasty')} · {config.get('scoring', 'ppr').upper()} · "
-        f"{len(snapshot.get('teams') or [])}-team · synced from Sleeper"
+    from src.trade_assets import (
+        keeper_rounds_summary,
+        my_trade_package,
+        opponent_trade_pool,
+        recommend_keepers,
     )
 
-    player_labels = [f"{p['name']} ({p['position']}, {p['manager']}) — {p['fc_value']:,}" for p in pool]
-    label_to_name = {lbl: p["name"] for lbl, p in zip(player_labels, pool)}
-    meta = {p["name"]: p for p in pool}
+    my_players, my_picks = my_trade_package(snapshot, my_team, fc)
+    opp_players, opp_picks = opponent_trade_pool(snapshot, my_team, fc)
+    pick_summary = keeper_rounds_summary(snapshot, my_team, fc)
 
-    pick_labels = [f"{p['label']} ({p['manager']}) — {p['fc_value']:,}" for p in picks]
-    pick_label_map = {lbl: p["label"] for lbl, p in zip(pick_labels, picks)}
+    st.caption(
+        "Side A = your tradeable assets only · Side B = rest of league · "
+        "[FantasyCalc](https://www.fantasycalc.com/trade-calculator) values"
+    )
+
+    if league_has_keepers(config, snapshot):
+        with st.expander("Keeper analysis — who to lock", expanded=True):
+            recs = recommend_keepers(snapshot, my_team, analyst.adp_map, fc, config, analyst.intel())
+            max_k = int(config.get("max_keepers") or (snapshot.get("league") or {}).get("settings", {}).get("max_keepers") or 0)
+            if recs:
+                top = [r for r in recs if r["verdict"] in ("Lock", "Keep")][:max_k]
+                names = ", ".join(f"**{r['player']}** (R{r['keeper_round']})" for r in top)
+                st.markdown(f"**Recommended {len(top)}/{max_k}:** {names}")
+                if pick_summary["consumed_rounds"]:
+                    st.caption(
+                        f"Keeper rounds used: {', '.join(f'R{r}' for r in pick_summary['consumed_rounds'])} · "
+                        f"Tradeable picks: {pick_summary['tradeable_count']}"
+                    )
+                kdf = pd.DataFrame([{
+                    "Rank": r["rank"],
+                    "Player": r["player"],
+                    "Pos": r["position"],
+                    "ADP": _cell(r["adp"]),
+                    "FC": f"{r['fc_value']:,}" if r["fc_value"] else "—",
+                    "Keeper Rd": f"R{r['keeper_round']}{'*' if r['round_estimated'] else ''}",
+                    "Surplus": f"{r['value_surplus']:+,}" if r["value_surplus"] is not None else "—",
+                    "Verdict": r["verdict"],
+                    "Current": "✓" if r["current_keeper"] else "",
+                    "Why": " · ".join(r["reasons"]),
+                } for r in recs])
+                st.dataframe(kdf, width="stretch", hide_index=True, height=280)
+                st.caption("* = estimated keeper round from ADP")
+
+    locked = analyst.get_keepers()
+    if locked:
+        st.info(f"Locked keepers (not tradeable): {', '.join(locked)}")
+
+    def _player_labels(pool: list[dict]) -> tuple[list[str], dict[str, str], dict]:
+        labels = [f"{p['name']} ({p['position']}) — {p['fc_value']:,}" for p in pool]
+        label_to_name = {lbl: p["name"] for lbl, p in zip(labels, pool)}
+        meta = {p["name"]: p for p in pool}
+        return labels, label_to_name, meta
+
+    def _pick_labels(pool: list[dict]) -> tuple[list[str], dict[str, str]]:
+        labels = [f"{p['label']} — {p['fc_value']:,}" for p in pool]
+        label_map = {lbl: p["label"] for lbl, p in zip(labels, pool)}
+        return labels, label_map
+
+    send_player_labels, send_name_map, send_meta = _player_labels(my_players)
+    recv_player_labels, recv_name_map, recv_meta = _player_labels(opp_players)
+    meta = {**send_meta, **recv_meta}
+
+    send_pick_labels, send_pick_map = _pick_labels(my_picks)
+    recv_pick_labels, recv_pick_map = _pick_labels(opp_picks)
 
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("Side A — You send")
-        send_sel = st.multiselect("Players", player_labels, key="tc_send", label_visibility="collapsed")
-        send_picks = st.multiselect("Picks", pick_labels, key="tc_send_picks", label_visibility="collapsed")
+        st.subheader("You send")
+        st.caption(f"{len(my_players)} players · {len(my_picks)} picks")
+        send_sel = st.multiselect("Your players", send_player_labels, key="tc_send", label_visibility="collapsed")
+        send_picks = st.multiselect("Your picks", send_pick_labels, key="tc_send_picks", label_visibility="collapsed")
     with c2:
-        st.subheader("Side B — You receive")
-        recv_sel = st.multiselect("Players", player_labels, key="tc_recv", label_visibility="collapsed")
-        recv_picks = st.multiselect("Picks", pick_labels, key="tc_recv_picks", label_visibility="collapsed")
+        st.subheader("You receive")
+        st.caption(f"{len(opp_players)} players · {len(opp_picks)} picks")
+        recv_sel = st.multiselect("Their players", recv_player_labels, key="tc_recv", label_visibility="collapsed")
+        recv_picks = st.multiselect("Their picks", recv_pick_labels, key="tc_recv_picks", label_visibility="collapsed")
 
-    send_players = [label_to_name[x] for x in send_sel]
-    recv_players = [label_to_name[x] for x in recv_sel]
-    send_pk = [pick_label_map[x] for x in send_picks]
-    recv_pk = [pick_label_map[x] for x in recv_picks]
+    send_players = [send_name_map[x] for x in send_sel]
+    recv_players = [recv_name_map[x] for x in recv_sel]
+    send_pk = [send_pick_map[x] for x in send_picks]
+    recv_pk = [recv_pick_map[x] for x in recv_picks]
 
     verdict = evaluate_trade(
         fc, send_players, recv_players,

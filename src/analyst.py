@@ -14,6 +14,7 @@ from src.analysis import (
     find_waiver_targets,
     grade_roster,
 )
+from src.fantasycalc import FantasyCalcClient
 from src.market_insights import MarketInsightsClient
 from src.fantasypros import FantasyProsClient
 from src.trade_analysis import analyze_league_trades, proposals_to_legacy_matches
@@ -282,6 +283,23 @@ class DynastyAnalyst:
             if from_draft:
                 return from_draft
         return []
+
+    def keeper_recommendations(self) -> list[dict]:
+        from src.trade_assets import recommend_keepers
+
+        snapshot, my_team = self._ensure_loaded()
+        cfg = {**self.config, "league": snapshot.get("league") or {}}
+        fc, _ = self._market_clients()
+        return recommend_keepers(snapshot, my_team, self.adp_map, fc, cfg, self.intel())
+
+    def my_trade_assets(self) -> tuple[list[dict], list[dict]]:
+        from src.trade_assets import my_trade_package
+
+        snapshot, my_team = self._ensure_loaded()
+        cfg = {**self.config, "league": snapshot.get("league") or {}}
+        fc = FantasyCalcClient(cfg)
+        fc.load()
+        return my_trade_package(snapshot, my_team, fc)
 
     def keeper_plan(self, keeper_names: list[str] | None = None):
         _, my_team = self._ensure_loaded()
