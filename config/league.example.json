@@ -14,7 +14,7 @@
     "SUPERFLEX": 0
   },
   "bench_spots": 15,
-  "max_keepers": 4,
+  "max_keepers": 0,
   "keepers": [],
   "notes": {
     "contending": true,

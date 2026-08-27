@@ -128,7 +128,7 @@ def _safe_dataframe(df: pd.DataFrame, height: int | None = None) -> None:
 
 def _render_pick_cards(recs, *, highlight_first: bool = False) -> None:
     if not recs:
-        st.info("No recommendations yet — sync your league and check keepers.")
+        st.info("No recommendations yet — sync your league.")
         return
     for i, r in enumerate(recs, 1):
         border = "#1DB954" if highlight_first and i == 1 else None
@@ -287,17 +287,19 @@ def _render_news_table(df: pd.DataFrame, height: int = 360) -> None:
 def _draft_context(analyst: DynastyAnalyst, config: dict) -> dict:
     """Shared draft state used across Home and Draft tabs."""
     draft = analyst.draft_state()
-    keepers = config.get("keepers") or analyst.get_keepers()
+    has_keepers = analyst.has_keepers()
+    keepers = analyst.get_keepers() if has_keepers else []
     my_slot = (draft or {}).get("my_slot")
     teams = (draft or {}).get("teams") or len((draft or {}).get("draft_order") or {}) or 12
     recs, next_picks, target_pick = analyst.pick_recommendations(
         keeper_names=keepers, limit=5, draft=draft, my_slot=my_slot,
     )
     upside = analyst.upside_targets(keeper_names=keepers, limit=12)
-    plan = analyst.keeper_plan(keepers)
+    plan = analyst.draft_plan(keepers if has_keepers else None)
     return {
         "draft": draft,
         "keepers": keepers,
+        "has_keepers": has_keepers,
         "my_slot": my_slot,
         "teams": teams,
         "recs": recs,
@@ -381,7 +383,7 @@ if (
         **What you'll get**
         - A **Home** dashboard with your next picks and breakout targets
         - **Draft** prep tailored to your snake slot
-        - **My Team** keepers, grades, and sell alerts
+        - **My Team** roster grades and sell alerts
         - **League** map and trade targets
         - **News** and waivers in one place
         """
@@ -403,6 +405,7 @@ ctx = _draft_context(analyst, config)
 draft = ctx["draft"]
 teams = ctx["teams"]
 my_slot = ctx["my_slot"]
+has_keepers = ctx["has_keepers"]
 
 with st.sidebar:
     st.divider()
@@ -429,17 +432,25 @@ tab_home, tab_draft, tab_team, tab_league, tab_news = st.tabs(
 with tab_home:
     try:
         my = overview.get("my_needs")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Draft slot", my_slot or "—")
-        c2.metric(
-            "Next pick",
-            format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
-        )
-        c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
-        c4.metric("Keepers", f"{len(ctx['keepers'])}/{ctx['plan'].max_keepers}")
-
-        if ctx["keepers"]:
-            st.markdown("**Keepers:** " + " · ".join(f"`{k}`" for k in ctx["keepers"]))
+        if has_keepers:
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Draft slot", my_slot or "—")
+            c2.metric(
+                "Next pick",
+                format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
+            )
+            c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
+            c4.metric("Keepers", f"{len(ctx['keepers'])}/{ctx['plan'].max_keepers}")
+            if ctx["keepers"]:
+                st.markdown("**Keepers:** " + " · ".join(f"`{k}`" for k in ctx["keepers"]))
+        else:
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Draft slot", my_slot or "—")
+            c2.metric(
+                "Next pick",
+                format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
+            )
+            c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
 
         st.divider()
         left, right = st.columns([3, 2])
@@ -513,7 +524,7 @@ with tab_draft:
 
             st.caption("Sorted by roster fit. Green rows = strong fit (75+).")
             if not board:
-                st.info("No available players — sync draft or check keepers.")
+                st.info("No available players — sync draft or refresh league data.")
             else:
                 bdf = pd.DataFrame([{
                     "Player": b.player,
@@ -591,20 +602,23 @@ with tab_draft:
 
 with tab_team:
     try:
+        team_sections = ["Roster grades", "Sell alerts"]
+        if has_keepers:
+            team_sections = ["Keepers"] + team_sections
         section = st.radio(
             "Section",
-            ["Keepers", "Roster grades", "Sell alerts"],
+            team_sections,
             horizontal=True,
             label_visibility="collapsed",
         )
 
-        if section == "Keepers":
+        if section == "Keepers" and has_keepers:
             _, my_team = analyst._ensure_loaded()
             skill_players = sorted(
                 p["name"] for p in my_team.get("players", [])
                 if p.get("position") in {"QB", "RB", "WR", "TE"}
             )
-            max_keepers = int(config.get("max_keepers", 4))
+            max_keepers = int(config.get("max_keepers") or ctx["plan"].max_keepers or 0)
             default_keepers = [k for k in ctx["keepers"] if k in skill_players]
 
             selected = st.multiselect(

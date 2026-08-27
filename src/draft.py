@@ -86,6 +86,30 @@ def _drafted_names(draft: dict | None) -> set[str]:
     return names
 
 
+def league_has_keepers(config: dict, snapshot: dict | None = None) -> bool:
+    """True when Sleeper league allows keepers (max_keepers > 0)."""
+    if snapshot:
+        settings = (snapshot.get("league") or {}).get("settings") or {}
+        if settings.get("max_keepers") is not None:
+            return int(settings.get("max_keepers") or 0) > 0
+    if config.get("max_keepers") is not None:
+        return int(config.get("max_keepers") or 0) > 0
+    return False
+
+
+def build_roster_draft_plan(my_team: dict, config: dict) -> KeeperPlan:
+    """Draft needs from full roster — for leagues without keepers."""
+    needs = analyze_team_needs(my_team, config)
+    priorities = list(needs.desperate_for) or list(needs.starter_gaps.keys()) or ["RB", "WR"]
+    return KeeperPlan(
+        keepers=[],
+        max_keepers=0,
+        post_keeper_counts=needs.position_counts,
+        remaining_needs=needs.desperate_for or [p for p, g in needs.starter_gaps.items()],
+        draft_priorities=priorities,
+    )
+
+
 def _keeper_names_for_roster(draft: dict | None, roster_id: int) -> list[str]:
     if not draft:
         return []
@@ -163,7 +187,13 @@ def build_keeper_plan(
     config: dict,
     draft: dict | None = None,
 ) -> KeeperPlan:
-    max_keepers = int(config.get("max_keepers") or config.get("league", {}).get("settings", {}).get("max_keepers") or 4)
+    max_keepers = int(
+        config.get("max_keepers")
+        or config.get("league", {}).get("settings", {}).get("max_keepers")
+        or 0
+    )
+    if max_keepers <= 0:
+        return build_roster_draft_plan(my_team, config)
     keeper_set = set(keeper_names)
     virtual = _virtual_team_after_keepers(my_team, keeper_set)
     needs = analyze_team_needs(virtual, config)
@@ -215,7 +245,10 @@ def build_draft_board(
     if not my_team:
         return []
 
-    virtual = _virtual_team_after_keepers(my_team, set(keeper_names))
+    if league_has_keepers(config, snapshot) and keeper_names:
+        virtual = _virtual_team_after_keepers(my_team, set(keeper_names))
+    else:
+        virtual = my_team
     needs = analyze_team_needs(virtual, config)
     pos_counts = dict(needs.position_counts)
 

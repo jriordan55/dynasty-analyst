@@ -21,8 +21,10 @@ from src.draft import (
     build_draft_board,
     build_keeper_plan,
     build_manager_profiles,
+    build_roster_draft_plan,
     build_upside_targets,
     format_pick_label,
+    league_has_keepers,
     recommend_for_my_slot,
     recommend_picks,
     sync_keepers_from_draft,
@@ -101,6 +103,11 @@ class DynastyAnalyst:
 
         self._snapshot = snapshot
         self._my_team = next((t for t in snapshot["teams"] if t.get("is_mine")), None)
+        max_k = (snapshot.get("league") or {}).get("settings", {}).get("max_keepers")
+        if max_k is not None:
+            self.config["max_keepers"] = int(max_k)
+            if int(max_k) == 0:
+                self.config["keepers"] = []
         return snapshot
 
     def _ensure_snapshot(self) -> dict:
@@ -173,11 +180,21 @@ class DynastyAnalyst:
         market.load()
         return market.fc, market
 
+    def has_keepers(self) -> bool:
+        return league_has_keepers(self.config, self._ensure_snapshot())
+
+    def draft_plan(self, keeper_names: list[str] | None = None):
+        _, my_team = self._ensure_loaded()
+        if not self.has_keepers():
+            return build_roster_draft_plan(my_team, self.config)
+        names = keeper_names if keeper_names is not None else self.get_keepers()
+        return build_keeper_plan(my_team, names, self.adp_map, self.config, self.draft_state())
+
     def _trade_analysis(self):
         snapshot, my_team = self._ensure_loaded()
-        keepers = self.config.get("keepers") or self.get_keepers()
+        keepers = self.get_keepers() if self.has_keepers() else []
         cfg = {**self.config, "keepers": keepers, "league": snapshot.get("league") or {}}
-        plan = build_keeper_plan(my_team, keepers, self.adp_map, cfg, self.draft_state())
+        plan = self.draft_plan(keepers if keepers else None)
         fc, market = self._market_clients()
         return analyze_league_trades(
             snapshot, my_team, cfg, self.intel(), keeper_plan=plan,
@@ -235,6 +252,8 @@ class DynastyAnalyst:
         return draft
 
     def get_keepers(self) -> list[str]:
+        if not self.has_keepers():
+            return []
         configured = self.config.get("keepers") or []
         if configured:
             return configured
@@ -251,7 +270,9 @@ class DynastyAnalyst:
 
     def draft_board(self, keeper_names: list[str] | None = None, limit: int = 75) -> list:
         snapshot = self._ensure_snapshot()
-        names = keeper_names if keeper_names is not None else self.get_keepers()
+        names = [] if not self.has_keepers() else (
+            keeper_names if keeper_names is not None else self.get_keepers()
+        )
         intel = self.intel()
         return build_draft_board(
             self.adp_map, snapshot, self.config, names, intel=intel, limit=limit,
