@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from src.adp import lookup_adp
 from src.fantasycalc import FantasyCalcClient
 from src.rankings import RankRow
 
@@ -287,7 +288,8 @@ def screener_pool(snapshot: dict, fc: FantasyCalcClient, adp_map: dict) -> list[
 
 def _screener_row(p, fc_v, adp_map, rostered, add_counts) -> dict:
     name = p.get("name") or ""
-    adp = adp_map.get(name.lower()) or adp_map.get(name)
+    adp_entry = lookup_adp(name, adp_map)
+    adp = adp_entry.adp if adp_entry else None
     return {
         "player": name,
         "position": p.get("position"),
@@ -311,7 +313,8 @@ def scatter_players(snapshot: dict, fc: FantasyCalcClient, adp_map: dict) -> lis
                 continue
             name = p.get("name") or ""
             fc_v = fc.get(name, p.get("id"))
-            adp = adp_map.get(name.lower()) or adp_map.get(name)
+            adp_entry = lookup_adp(name, adp_map)
+            adp = adp_entry.adp if adp_entry else None
             if not fc_v or not adp:
                 continue
             points.append({

@@ -132,10 +132,26 @@ def render_rankings(analyst, config: dict) -> None:
         st.dataframe(_rankings_df(rows), width="stretch", hide_index=True, height=520)
 
     elif section == "Player ADP":
-        rows = adp_rankings(100)
-        rows = overlay_league(rows, snapshot, config)
-        st.caption("4for4 ADP from bundled data")
-        st.dataframe(_rankings_df(rows), width="stretch", hide_index=True, height=520)
+        from src.adp_sources import build_adp_board
+
+        board, note = build_adp_board(config, snapshot, limit=150)
+        st.caption(note + " · [Dynatyze ADP reference](https://dynatyze.com/football/adp)")
+        df = pd.DataFrame([{
+            "Rank": b.rank,
+            "Player": b.player,
+            "Pos": b.position,
+            "Team": b.team,
+            "Consensus": b.consensus,
+            "4for4": _cell(b.four_for_four),
+            "Sleeper": _cell(b.sleeper),
+            "FantasyCalc": _cell(b.fantasycalc),
+            "LeagueLogs": _cell(b.leaguelogs),
+            "Dynatyze": _cell(b.dynatyze),
+            "Src": b.sources,
+            "Var": b.variance,
+            "In league": _cell(b.on_roster, "—"),
+        } for b in board])
+        st.dataframe(df, width="stretch", hide_index=True, height=520)
 
     elif section == "Projections Board":
         rows = fc_rankings({**config, "league": snapshot.get("league") or {}}, limit=75)

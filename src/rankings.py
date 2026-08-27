@@ -9,7 +9,7 @@ from pathlib import Path
 
 import httpx
 
-from src.adp import load_adp
+from src.adp import load_adp, lookup_adp
 from src.fantasycalc import FantasyCalcClient
 from src.market_insights import MarketInsightsClient
 
@@ -109,7 +109,8 @@ def overlay_league(rows: list[RankRow], snapshot: dict | None, config: dict | No
         key = row.player.lower()
         fc_v = fc.get(row.player)
         mi = market.get(row.player)
-        adp = adp_map.get(key) or adp_map.get(row.player)
+        adp_entry = lookup_adp(row.player, adp_map)
+        adp = adp_entry.adp if adp_entry else None
         signal = _buy_hold_signal(row, fc_v.value if fc_v else None, fc_v.trend_30d if fc_v else 0)
         out.append(
             RankRow(
@@ -144,23 +145,25 @@ def _buy_hold_signal(row: RankRow, fc_value: int | None, trend: int) -> str:
     return "HOLD"
 
 
-def adp_rankings(limit: int = 100) -> list[RankRow]:
-    adp_map = load_adp()
-    items = sorted(adp_map.items(), key=lambda x: x[1])[:limit]
+def adp_rankings(config: dict, snapshot: dict | None = None, limit: int = 150) -> tuple[list[RankRow], str]:
+    from src.adp_sources import build_adp_board
+
+    board, note = build_adp_board(config, snapshot, limit=limit)
     rows: list[RankRow] = []
-    for i, (name, adp) in enumerate(items, 1):
+    for b in board:
         rows.append(
             RankRow(
-                rank=i,
-                player=name,
-                position="",
-                team="",
-                value=int(adp),
-                source="4for4 ADP",
-                adp=adp,
+                rank=b.rank,
+                player=b.player,
+                position=b.position,
+                team=b.team,
+                value=int(b.consensus or 0),
+                source=f"{b.sources} sources",
+                adp=b.consensus,
+                on_roster=b.on_roster,
             )
         )
-    return rows
+    return rows, note
 
 
 def fc_rankings(config: dict, limit: int = 100) -> list[RankRow]:
