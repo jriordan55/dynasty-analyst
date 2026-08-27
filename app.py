@@ -11,6 +11,13 @@ import streamlit as st
 from src.analyst import DynastyAnalyst, load_config
 from src.draft import format_pick_label
 from src.news import get_news_client
+from src.ui_platform import (
+    inject_dynatyze_styles,
+    render_analytics,
+    render_rankings,
+    render_tools,
+    render_trade_calculator,
+)
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config" / "league.json"
@@ -90,15 +97,10 @@ def load_grades(config_json: str) -> list[dict]:
 
 
 def _inject_styles() -> None:
+    inject_dynatyze_styles()
     st.markdown(
         """
         <style>
-        div[data-testid="stMetric"] {
-            background: #1a1d24;
-            padding: 0.65rem 0.85rem;
-            border-radius: 0.5rem;
-            border: 1px solid #2d3139;
-        }
         .pos-pill {
             display: inline-block;
             padding: 0.1rem 0.45rem;
@@ -312,7 +314,7 @@ def _draft_context(analyst: DynastyAnalyst, config: dict) -> dict:
 # ── Page setup ──────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Dynasty Analyst",
+    page_title="Gridiron Analyst",
     page_icon="🏈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -382,11 +384,12 @@ if (
     st.markdown(
         """
         **What you'll get**
-        - A **Home** dashboard with your next picks and breakout targets
-        - **Draft** prep tailored to your snake slot
-        - **My Team** roster grades and sell alerts
-        - **League** map and trade targets
-        - **News** and waivers in one place
+        - **Home** dashboard with next picks and breakout targets
+        - **Rankings** — Dynatyze boards, ADP, picks, expert consensus
+        - **Analytics** — screener, scatterplot, trade wire, trade database
+        - **Tools** — portfolio manager, mock draft, start/sit
+        - **Trade Calc** — graded trades with FantasyCalc + your league rosters
+        - **League** map and trade proposals synced from Sleeper
         """
     )
     st.stop()
@@ -424,8 +427,8 @@ with st.sidebar:
 st.title(overview.get("my_team") or "Dynasty Analyst")
 st.caption(config.get("league_name") or "Sleeper league · synced")
 
-tab_home, tab_draft, tab_team, tab_league, tab_news = st.tabs(
-    ["Home", "Draft", "My Team", "League", "News"]
+tab_home, tab_rankings, tab_analytics, tab_tools, tab_draft, tab_team, tab_league, tab_trade, tab_news = st.tabs(
+    ["Home", "Rankings", "Analytics", "Tools", "Draft", "My Team", "League", "Trade Calc", "News"]
 )
 
 # ── Home ──────────────────────────────────────────────────────────────────────
@@ -470,6 +473,30 @@ with tab_home:
                 st.markdown(f"{icon} Consider selling **{s.player}** — {_truncate(s.reason, 80)}")
     except Exception as e:
         st.error(f"Home failed: {e}")
+
+# ── Rankings ──────────────────────────────────────────────────────────────────
+
+with tab_rankings:
+    try:
+        render_rankings(analyst, config)
+    except Exception as e:
+        st.error(f"Rankings failed: {e}")
+
+# ── Analytics ─────────────────────────────────────────────────────────────────
+
+with tab_analytics:
+    try:
+        render_analytics(analyst, config)
+    except Exception as e:
+        st.error(f"Analytics failed: {e}")
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
+
+with tab_tools:
+    try:
+        render_tools(analyst, config, ctx)
+    except Exception as e:
+        st.error(f"Tools failed: {e}")
 
 # ── Draft ─────────────────────────────────────────────────────────────────────
 
@@ -836,6 +863,14 @@ with tab_league:
             _safe_dataframe(pd.DataFrame(rows), height=420)
     except Exception as e:
         st.error(f"League failed: {e}")
+
+# ── Trade Calc ────────────────────────────────────────────────────────────────
+
+with tab_trade:
+    try:
+        render_trade_calculator(analyst, config)
+    except Exception as e:
+        st.error(f"Trade calculator failed: {e}")
 
 # ── News ──────────────────────────────────────────────────────────────────────
 
