@@ -269,19 +269,23 @@ class SleeperClient:
                     "injury_status": p.get("injury_status"),
                     "search_rank": p.get("search_rank"),
                     "depth_chart_order": p.get("depth_chart_order"),
+                    "depth_chart_position": p.get("depth_chart_position"),
                     "years_exp": p.get("years_exp"),
                     "is_starter": pid in starters,
                     "is_taxi": pid in taxi,
                     "is_ir": pid in reserve,
                 })
 
+            settings = roster.get("settings") or {}
             teams.append({
                 "roster_id": roster["roster_id"],
                 "owner_id": roster.get("owner_id"),
                 "owner_name": owner.get("display_name") or owner.get("username", "Unknown"),
                 "team_name": team_name,
-                "wins": roster.get("settings", {}).get("wins", 0),
-                "losses": roster.get("settings", {}).get("losses", 0),
+                "wins": settings.get("wins", 0),
+                "losses": settings.get("losses", 0),
+                "fpts": settings.get("fpts", 0),
+                "fpts_against": settings.get("fpts_against", 0),
                 "players": roster_players,
                 "draft_picks": roster.get("draft_picks") or [],
                 "is_mine": roster.get("owner_id") == my_user_id,

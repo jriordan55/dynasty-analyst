@@ -10,7 +10,9 @@ import streamlit as st
 
 from src.analyst import DynastyAnalyst, load_config
 from src.draft import format_pick_label, is_pre_draft
+from src.my_league import build_dashboard
 from src.news import get_news_client
+from src.ui_my_league import render_my_league
 from src.ui_platform import (
     inject_dynatyze_styles,
     render_analytics,
@@ -412,13 +414,16 @@ teams = ctx["teams"]
 my_slot = ctx["my_slot"]
 has_keepers = ctx["show_keeper_ui"]
 show_fit = not is_pre_draft(draft)
+_, my_team_data = analyst._ensure_loaded()
+dash = build_dashboard(analyst._ensure_snapshot(), my_team_data, config)
+grades = load_grades(json.dumps(config, sort_keys=True))
 
 with st.sidebar:
     st.divider()
-    st.caption("Connected")
-    st.markdown(f"**{overview.get('my_team') or 'My Team'}**")
-    if overview.get("record"):
-        st.caption(f"Record {overview['record']}")
+    st.markdown(f"**{dash.league_name}**")
+    st.caption(f"{dash.format_label} · {dash.num_teams} teams · {dash.season}")
+    st.markdown(f"**{dash.username}**")
+    st.caption(f"{dash.record} · Rank #{dash.rank} · {dash.status}")
     if my_slot:
         st.caption(f"Draft slot **{my_slot}**")
     if ctx["target_pick"]:
@@ -426,8 +431,8 @@ with st.sidebar:
     if ctx["plan"].remaining_needs:
         st.caption(f"Needs: {', '.join(ctx['plan'].remaining_needs[:3])}")
 
-st.title(overview.get("my_team") or "Dynasty Analyst")
-st.caption(config.get("league_name") or "Sleeper league · synced")
+st.title(dash.team_name)
+st.caption(f"{dash.league_name} · synced from Sleeper")
 
 tab_home, tab_rankings, tab_analytics, tab_tools, tab_draft, tab_team, tab_league, tab_trade, tab_news = st.tabs(
     ["Home", "Rankings", "Analytics", "Tools", "Draft", "My Team", "League", "Trade Calc", "News"]
@@ -632,83 +637,11 @@ with tab_draft:
     except Exception as e:
         st.error(f"Draft failed: {e}")
 
-# ── My Team ───────────────────────────────────────────────────────────────────
+# ── My Team (League Hub) ──────────────────────────────────────────────────────
 
 with tab_team:
     try:
-        team_sections = ["Roster grades", "Sell alerts"]
-        if has_keepers:
-            team_sections = ["Keepers"] + team_sections
-        section = st.radio(
-            "Section",
-            team_sections,
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-
-        if section == "Keepers" and has_keepers:
-            _, my_team = analyst._ensure_loaded()
-            skill_players = sorted(
-                p["name"] for p in my_team.get("players", [])
-                if p.get("position") in {"QB", "RB", "WR", "TE"}
-            )
-            max_keepers = int(config.get("max_keepers") or ctx["plan"].max_keepers or 0)
-            default_keepers = [k for k in ctx["keepers"] if k in skill_players]
-
-            selected = st.multiselect(
-                f"Select keepers (max {max_keepers})",
-                skill_players,
-                default=default_keepers,
-                max_selections=max_keepers,
-            )
-            if st.button("Save keepers", type="primary"):
-                updated = {**config, "keepers": selected}
-                save_config(updated)
-                st.success("Keepers saved.")
-                st.rerun()
-
-            plan = analyst.keeper_plan(selected)
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Locked", f"{len(plan.keepers)}/{plan.max_keepers}")
-            m2.metric("Draft needs", ", ".join(plan.remaining_needs[:2]) or "Balanced")
-            m3.metric("Priorities", ", ".join(plan.draft_priorities[:2]) or "—")
-
-            counts = plan.post_keeper_counts
-            st.caption(
-                f"After keepers — QB {counts.get('QB', 0)} · RB {counts.get('RB', 0)} · "
-                f"WR {counts.get('WR', 0)} · TE {counts.get('TE', 0)}"
-            )
-            if plan.keepers:
-                kdf = pd.DataFrame([{
-                    "Player": k["name"],
-                    "Pos": k["position"],
-                    "ADP": _cell(k["adp"]),
-                    "Round": _cell(k.get("keeper_round")),
-                } for k in plan.keepers])
-                _safe_dataframe(kdf)
-
-        elif section == "Roster grades":
-            grades = load_grades(json.dumps(config, sort_keys=True))
-            df = pd.DataFrame([{
-                "Player": g["name"],
-                "Pos": g["position"],
-                "ADP": _cell(g["adp"]),
-                "Age": _cell(g["age"]),
-                "Grade": g["grade"],
-                "Notes": _truncate("; ".join(g["notes"]), 80),
-            } for g in grades])
-            _safe_dataframe(df, height=480)
-
-        else:
-            sells = analyst.sell_candidates()
-            if not sells:
-                st.success("No urgent sell candidates on your roster.")
-            else:
-                for s in sells:
-                    icon = {"high": "🔴", "medium": "🟡", "low": "⚪"}.get(s.urgency, "")
-                    with st.container(border=True):
-                        st.markdown(f"{icon} **{s.player}** ({s.position}) · ADP {_cell(s.adp)}")
-                        st.caption(s.reason)
+        render_my_league(analyst, config, ctx, grades)
     except Exception as e:
         st.error(f"My Team failed: {e}")
 

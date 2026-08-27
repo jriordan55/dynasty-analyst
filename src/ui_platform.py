@@ -55,7 +55,7 @@ def inject_dynatyze_styles() -> None:
             font-weight: 700;
             letter-spacing: 0.08em;
             text-transform: uppercase;
-            margin: 0.75rem 0 0.25rem 0;
+            margin: 0.5rem 0 0.15rem 0;
         }
         .grade-a { color: #1DB954; font-size: 2rem; font-weight: 800; }
         .grade-b { color: #86efac; font-size: 2rem; font-weight: 800; }
