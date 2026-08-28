@@ -20,6 +20,7 @@ from src.ui_platform import (
     render_tools,
     render_trade_calculator,
 )
+from src.version import APP_BUILD
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config" / "league.json"
@@ -430,6 +431,7 @@ with st.sidebar:
         st.caption(f"Next pick: **{format_pick_label(ctx['target_pick'], teams)}**")
     if ctx["plan"].remaining_needs:
         st.caption(f"Needs: {', '.join(ctx['plan'].remaining_needs[:3])}")
+    st.caption(f"App build **{APP_BUILD}**")
 
 st.title(dash.team_name)
 st.caption(f"{dash.league_name} · synced from Sleeper")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import html as html_lib
 from datetime import datetime
 
 import pandas as pd
@@ -40,75 +39,6 @@ from src.trade_calc import evaluate_trade
 
 
 POS_COLORS = {"QB": "#3b82f6", "RB": "#22c55e", "WR": "#a855f7", "TE": "#f59e0b", "PICK": "#94a3b8"}
-
-_DZ_RANKINGS_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap');
-body {
-    margin: 0;
-    font-family: 'Montserrat', system-ui, -apple-system, sans-serif;
-    background: transparent;
-    color: #e6edf3;
-}
-.dz-rankings-wrap { max-width: 80rem; margin: 0 auto; color: #e6edf3; }
-.dz-rankings-kicker {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 11px; font-weight: 700; letter-spacing: 0.22em;
-    text-transform: uppercase; color: #34d399; margin: 0;
-}
-.dz-rankings-title {
-    margin: 0.5rem 0 0 0; font-size: clamp(1.875rem, 4vw, 3rem);
-    font-weight: 800; letter-spacing: -0.04em; line-height: 1.05; color: #f0f6fc;
-}
-.dz-rankings-lead {
-    margin: 0.75rem 0 0 0; max-width: 48rem; font-size: 1rem;
-    line-height: 1.65; color: #8b949e;
-}
-.dz-rankings-meta {
-    margin: 1rem 0 0 0; padding-left: 0.75rem;
-    border-left: 2px solid rgba(16, 185, 129, 0.6);
-    font-size: 0.875rem; line-height: 1.65; color: #8b949e;
-}
-.dz-rankings-meta-label {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.22em;
-    text-transform: uppercase; color: #34d399;
-}
-.dz-rankings-meta-date { font-weight: 600; color: #f0f6fc; }
-.dz-rankings-list {
-    list-style: none; margin: 1.5rem 0 0 0; padding: 0;
-    border: 1px solid #30363d; border-radius: 0.75rem;
-    background: rgba(22, 27, 34, 0.4); overflow: hidden;
-}
-.dz-rankings-row {
-    display: flex; align-items: center; gap: 0.75rem;
-    padding: 0.625rem 1rem; font-size: 0.875rem; border-top: 1px solid #30363d;
-}
-.dz-rankings-row:first-child { border-top: none; }
-.dz-rankings-rank {
-    width: 2rem; flex-shrink: 0; text-align: right;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.75rem; font-weight: 700; font-variant-numeric: tabular-nums; color: #8b949e;
-}
-.dz-rankings-player {
-    min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; font-weight: 600; color: #f0f6fc; text-decoration: none;
-}
-.dz-rankings-player:hover { color: #10b981; text-decoration: underline; }
-.dz-rankings-pos, .dz-rankings-team {
-    flex-shrink: 0;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.75rem; letter-spacing: 0.05em; text-transform: uppercase; color: #8b949e;
-}
-.dz-rankings-team { width: 3rem; }
-.dz-rankings-value {
-    width: 4rem; flex-shrink: 0; text-align: right;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.75rem; font-variant-numeric: tabular-nums; color: rgba(16, 185, 129, 0.9);
-}
-.dz-rankings-source { margin-top: 1rem; font-size: 0.75rem; color: #6e7681; }
-.dz-rankings-source a { color: #34d399; text-decoration: none; }
-.dz-rankings-source a:hover { text-decoration: underline; }
-"""
 
 
 def inject_dynatyze_styles() -> None:
@@ -155,67 +85,77 @@ def _cell(v, fallback: str = "—") -> str:
     return str(v)
 
 
-def _render_dynatyze_html(html_body: str) -> None:
-    """Render self-contained HTML (st.html when available, else markdown fallback)."""
-    doc = f"<!DOCTYPE html><html><head><style>{_DZ_RANKINGS_CSS}</style></head><body>{html_body}</body></html>"
-    render = getattr(st, "html", None)
-    if render:
-        render(doc, height=3600, scrolling=True)
-    else:
-        st.markdown(doc, unsafe_allow_html=True)
+def _player_profile_url(row) -> str:
+    href = row.player_url or "https://dynatyze.com/football/nfl-rankings"
+    if href.startswith("/"):
+        href = f"https://dynatyze.com{href}"
+    return href
+
+
+def _dynatyze_board_df(rows) -> pd.DataFrame:
+    records = []
+    for row in rows:
+        records.append({
+            "Rank": row.rank,
+            "Player": row.player,
+            "Profile": _player_profile_url(row),
+            "Pos": row.position,
+            "Team": row.team,
+            "SF Value": f"{row.value:,}",
+        })
+    return pd.DataFrame(records)
 
 
 def _render_dynatyze_dynasty_page(rows, updated: str) -> None:
-    """Mirror https://dynatyze.com/football/nfl-rankings layout and styling."""
-    iso_date, display_date = format_dynatyze_updated(updated)
+    """Mirror https://dynatyze.com/football/nfl-rankings — native Streamlit for Cloud/mobile."""
+    _, display_date = format_dynatyze_updated(updated)
     if not display_date:
         display_date = updated or datetime.now().strftime("%d %b %Y")
-    if not iso_date:
-        iso_date = datetime.now().strftime("%Y-%m-%d")
 
-    row_html = []
-    for row in rows:
-        href = row.player_url or "https://dynatyze.com/football/nfl-rankings"
-        if href.startswith("/"):
-            href = f"https://dynatyze.com{href}"
-        row_html.append(
-            f'<li class="dz-rankings-row">'
-            f'<span class="dz-rankings-rank">{row.rank}</span>'
-            f'<a class="dz-rankings-player" href="{html_lib.escape(href)}" target="_blank" rel="noopener">'
-            f"{html_lib.escape(row.player)}</a>"
-            f'<span class="dz-rankings-pos">{html_lib.escape(row.position)}</span>'
-            f'<span class="dz-rankings-team">{html_lib.escape(row.team)}</span>'
-            f'<span class="dz-rankings-value">{row.value:,}</span>'
-            f"</li>"
-        )
-
-    _render_dynatyze_html(
-        f"""
-        <section class="dz-rankings-wrap" aria-label="NFL Dynasty Football Rankings 2026">
-            <p class="dz-rankings-kicker">Dynasty Market</p>
-            <h1 class="dz-rankings-title">NFL Dynasty Football Rankings 2026</h1>
-            <p class="dz-rankings-lead">
-                The definitive dynasty football rankings for the 2026 season — 600+ quarterbacks,
-                running backs, wide receivers, and tight ends ranked by long-term value across
-                Superflex and 1QB leagues, with TE premium and rookie picks. Values blend expert
-                consensus with our market model and update weekly.
-            </p>
-            <p class="dz-rankings-meta">
-                <span class="dz-rankings-meta-label">Board published</span>
-                <time class="dz-rankings-meta-date" datetime="{html_lib.escape(iso_date)}">{html_lib.escape(display_date)}</time>
-                · Priced from KeepTradeCut and FantasyCalc.
-                · Top {len(rows)} ranked.
-            </p>
-            <ol class="dz-rankings-list">
-                {"".join(row_html)}
-            </ol>
-            <p class="dz-rankings-source">
-                Source: <a href="https://dynatyze.com/football/nfl-rankings" target="_blank" rel="noopener">Dynatyze</a>.
-                Values and ranks match the public board; SF Value is the superflex dynasty scale (0–9999).
-            </p>
-        </section>
-        """
+    st.markdown(
+        '<p style="font-family:monospace;font-size:11px;font-weight:700;'
+        'letter-spacing:0.22em;text-transform:uppercase;color:#34d399;margin:0 0 0.25rem 0;">'
+        "Dynasty Market</p>",
+        unsafe_allow_html=True,
     )
+    st.markdown("### NFL Dynasty Football Rankings 2026")
+    st.markdown(
+        "The definitive dynasty football rankings for the 2026 season — 600+ quarterbacks, "
+        "running backs, wide receivers, and tight ends ranked by long-term value across "
+        "Superflex and 1QB leagues, with TE premium and rookie picks."
+    )
+    st.info(
+        f"**Board published {display_date}** · Priced from KeepTradeCut and FantasyCalc · "
+        f"Top {len(rows)} ranked · [View on Dynatyze](https://dynatyze.com/football/nfl-rankings)"
+    )
+
+    board = _dynatyze_board_df(rows)
+    st.dataframe(
+        board.drop(columns=["Profile"]),
+        column_config={
+            "Rank": st.column_config.NumberColumn("Rank", format="%d", width="small"),
+            "Player": st.column_config.TextColumn("Player", width="large"),
+            "Pos": st.column_config.TextColumn("Pos", width="small"),
+            "Team": st.column_config.TextColumn("Team", width="small"),
+            "SF Value": st.column_config.TextColumn("SF Value", width="small"),
+        },
+        width="stretch",
+        hide_index=True,
+        height=min(680, 40 + len(rows) * 36),
+    )
+
+    with st.expander("Player profile links", expanded=False):
+        st.dataframe(
+            board[["Rank", "Player", "Profile"]],
+            column_config={
+                "Rank": st.column_config.NumberColumn("Rank", format="%d"),
+                "Player": st.column_config.TextColumn("Player"),
+                "Profile": st.column_config.LinkColumn("Profile", display_text="Open on Dynatyze"),
+            },
+            width="stretch",
+            hide_index=True,
+            height=320,
+        )
 
 
 def _rankings_df(rows) -> pd.DataFrame:
@@ -244,6 +184,12 @@ def _fc_client(analyst, config: dict) -> FantasyCalcClient:
 
 def render_rankings(analyst, config: dict) -> None:
     snapshot = analyst._ensure_snapshot()
+
+    c1, c2 = st.columns([4, 1])
+    with c2:
+        if st.button("Refresh", use_container_width=True):
+            _load_dynatyze_dynasty.clear()
+            st.rerun()
 
     try:
         rows, updated = _load_dynatyze_dynasty()

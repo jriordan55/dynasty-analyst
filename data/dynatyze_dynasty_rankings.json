@@ -1,0 +1,605 @@
+{
+  "updated": "August 28, 2026",
+  "rows": [
+    {
+      "rank": 1,
+      "player": "Jahmyr Gibbs",
+      "position": "RB",
+      "team": "DET",
+      "value": 9997,
+      "player_url": "https://dynatyze.com/football/player/jahmyr-gibbs"
+    },
+    {
+      "rank": 2,
+      "player": "Josh Allen",
+      "position": "QB",
+      "team": "BUF",
+      "value": 9993,
+      "player_url": "https://dynatyze.com/football/player/josh-allen"
+    },
+    {
+      "rank": 3,
+      "player": "Bijan Robinson",
+      "position": "RB",
+      "team": "ATL",
+      "value": 9973,
+      "player_url": "https://dynatyze.com/football/player/bijan-robinson"
+    },
+    {
+      "rank": 4,
+      "player": "Ja'Marr Chase",
+      "position": "WR",
+      "team": "CIN",
+      "value": 9971,
+      "player_url": "https://dynatyze.com/football/player/jamarr-chase"
+    },
+    {
+      "rank": 5,
+      "player": "Jaxon Smith-Njigba",
+      "position": "WR",
+      "team": "SEA",
+      "value": 9250,
+      "player_url": "https://dynatyze.com/football/player/jaxon-smith-njigba"
+    },
+    {
+      "rank": 6,
+      "player": "Drake Maye",
+      "position": "QB",
+      "team": "NE",
+      "value": 8976,
+      "player_url": "https://dynatyze.com/football/player/drake-maye"
+    },
+    {
+      "rank": 7,
+      "player": "Puka Nacua",
+      "position": "WR",
+      "team": "LAR",
+      "value": 8672,
+      "player_url": "https://dynatyze.com/football/player/puka-nacua"
+    },
+    {
+      "rank": 8,
+      "player": "Brock Bowers",
+      "position": "TE",
+      "team": "LV",
+      "value": 8258,
+      "player_url": "https://dynatyze.com/football/player/brock-bowers"
+    },
+    {
+      "rank": 9,
+      "player": "Amon-Ra St. Brown",
+      "position": "WR",
+      "team": "DET",
+      "value": 8153,
+      "player_url": "https://dynatyze.com/football/player/amon-ra-st-brown"
+    },
+    {
+      "rank": 10,
+      "player": "Caleb Williams",
+      "position": "QB",
+      "team": "CHI",
+      "value": 7812,
+      "player_url": "https://dynatyze.com/football/player/caleb-williams"
+    },
+    {
+      "rank": 11,
+      "player": "Lamar Jackson",
+      "position": "QB",
+      "team": "BAL",
+      "value": 7531,
+      "player_url": "https://dynatyze.com/football/player/lamar-jackson"
+    },
+    {
+      "rank": 12,
+      "player": "Jayden Daniels",
+      "position": "QB",
+      "team": "WAS",
+      "value": 7440,
+      "player_url": "https://dynatyze.com/football/player/jayden-daniels"
+    },
+    {
+      "rank": 13,
+      "player": "Malik Nabers",
+      "position": "WR",
+      "team": "NYG",
+      "value": 7393,
+      "player_url": "https://dynatyze.com/football/player/malik-nabers"
+    },
+    {
+      "rank": 14,
+      "player": "Justin Jefferson",
+      "position": "WR",
+      "team": "MIN",
+      "value": 7367,
+      "player_url": "https://dynatyze.com/football/player/justin-jefferson"
+    },
+    {
+      "rank": 15,
+      "player": "Jeremiyah Love",
+      "position": "RB",
+      "team": "ARI",
+      "value": 7353,
+      "player_url": "https://dynatyze.com/football/player/jeremiyah-love"
+    },
+    {
+      "rank": 16,
+      "player": "Ashton Jeanty",
+      "position": "RB",
+      "team": "LV",
+      "value": 7350,
+      "player_url": "https://dynatyze.com/football/player/ashton-jeanty"
+    },
+    {
+      "rank": 17,
+      "player": "Trey McBride",
+      "position": "TE",
+      "team": "ARI",
+      "value": 7345,
+      "player_url": "https://dynatyze.com/football/player/trey-mcbride"
+    },
+    {
+      "rank": 18,
+      "player": "Joe Burrow",
+      "position": "QB",
+      "team": "CIN",
+      "value": 7297,
+      "player_url": "https://dynatyze.com/football/player/joe-burrow"
+    },
+    {
+      "rank": 19,
+      "player": "CeeDee Lamb",
+      "position": "WR",
+      "team": "DAL",
+      "value": 7163,
+      "player_url": "https://dynatyze.com/football/player/ceedee-lamb"
+    },
+    {
+      "rank": 20,
+      "player": "Omarion Hampton",
+      "position": "RB",
+      "team": "LAC",
+      "value": 6915,
+      "player_url": "https://dynatyze.com/football/player/omarion-hampton"
+    },
+    {
+      "rank": 21,
+      "player": "De'Von Achane",
+      "position": "RB",
+      "team": "MIA",
+      "value": 6895,
+      "player_url": "https://dynatyze.com/football/player/devon-achane"
+    },
+    {
+      "rank": 22,
+      "player": "Justin Herbert",
+      "position": "QB",
+      "team": "LAC",
+      "value": 6893,
+      "player_url": "https://dynatyze.com/football/player/justin-herbert"
+    },
+    {
+      "rank": 23,
+      "player": "Drake London",
+      "position": "WR",
+      "team": "ATL",
+      "value": 6833,
+      "player_url": "https://dynatyze.com/football/player/drake-london"
+    },
+    {
+      "rank": 24,
+      "player": "James Cook",
+      "position": "RB",
+      "team": "BUF",
+      "value": 6445,
+      "player_url": "https://dynatyze.com/football/player/james-cook"
+    },
+    {
+      "rank": 25,
+      "player": "Jonathan Taylor",
+      "position": "RB",
+      "team": "IND",
+      "value": 6375,
+      "player_url": "https://dynatyze.com/football/player/jonathan-taylor"
+    },
+    {
+      "rank": 26,
+      "player": "Colston Loveland",
+      "position": "TE",
+      "team": "CHI",
+      "value": 6359,
+      "player_url": "https://dynatyze.com/football/player/colston-loveland"
+    },
+    {
+      "rank": 27,
+      "player": "Trevor Lawrence",
+      "position": "QB",
+      "team": "JAX",
+      "value": 6307,
+      "player_url": "https://dynatyze.com/football/player/trevor-lawrence"
+    },
+    {
+      "rank": 28,
+      "player": "Tetairoa McMillan",
+      "position": "WR",
+      "team": "CAR",
+      "value": 6222,
+      "player_url": "https://dynatyze.com/football/player/tetairoa-mcmillan"
+    },
+    {
+      "rank": 29,
+      "player": "George Pickens",
+      "position": "WR",
+      "team": "DAL",
+      "value": 6218,
+      "player_url": "https://dynatyze.com/football/player/george-pickens"
+    },
+    {
+      "rank": 30,
+      "player": "Emeka Egbuka",
+      "position": "WR",
+      "team": "TB",
+      "value": 6212,
+      "player_url": "https://dynatyze.com/football/player/emeka-egbuka"
+    },
+    {
+      "rank": 31,
+      "player": "Patrick Mahomes",
+      "position": "QB",
+      "team": "KC",
+      "value": 6061,
+      "player_url": "https://dynatyze.com/football/player/patrick-mahomes"
+    },
+    {
+      "rank": 32,
+      "player": "Jalen Hurts",
+      "position": "QB",
+      "team": "PHI",
+      "value": 6037,
+      "player_url": "https://dynatyze.com/football/player/jalen-hurts"
+    },
+    {
+      "rank": 33,
+      "player": "Bo Nix",
+      "position": "QB",
+      "team": "DEN",
+      "value": 6008,
+      "player_url": "https://dynatyze.com/football/player/bo-nix"
+    },
+    {
+      "rank": 34,
+      "player": "Tyler Warren",
+      "position": "TE",
+      "team": "IND",
+      "value": 5984,
+      "player_url": "https://dynatyze.com/football/player/tyler-warren"
+    },
+    {
+      "rank": 35,
+      "player": "Jaxson Dart",
+      "position": "QB",
+      "team": "NYG",
+      "value": 5936,
+      "player_url": "https://dynatyze.com/football/player/jaxson-dart"
+    },
+    {
+      "rank": 36,
+      "player": "Kenneth Walker III",
+      "position": "RB",
+      "team": "KC",
+      "value": 5732,
+      "player_url": "https://dynatyze.com/football/player/kenneth-walker-iii"
+    },
+    {
+      "rank": 37,
+      "player": "Chase Brown",
+      "position": "RB",
+      "team": "CIN",
+      "value": 5719,
+      "player_url": "https://dynatyze.com/football/player/chase-brown"
+    },
+    {
+      "rank": 38,
+      "player": "Nico Collins",
+      "position": "WR",
+      "team": "HOU",
+      "value": 5715,
+      "player_url": "https://dynatyze.com/football/player/nico-collins"
+    },
+    {
+      "rank": 39,
+      "player": "Ladd McConkey",
+      "position": "WR",
+      "team": "LAC",
+      "value": 5705,
+      "player_url": "https://dynatyze.com/football/player/ladd-mcconkey"
+    },
+    {
+      "rank": 40,
+      "player": "Chris Olave",
+      "position": "WR",
+      "team": "NO",
+      "value": 5679,
+      "player_url": "https://dynatyze.com/football/player/chris-olave"
+    },
+    {
+      "rank": 41,
+      "player": "Brock Purdy",
+      "position": "QB",
+      "team": "SF",
+      "value": 5637,
+      "player_url": "https://dynatyze.com/football/player/brock-purdy"
+    },
+    {
+      "rank": 42,
+      "player": "Carnell Tate",
+      "position": "WR",
+      "team": "TEN",
+      "value": 5603,
+      "player_url": "https://dynatyze.com/football/player/carnell-tate"
+    },
+    {
+      "rank": 43,
+      "player": "Garrett Wilson",
+      "position": "WR",
+      "team": "NYJ",
+      "value": 5592,
+      "player_url": "https://dynatyze.com/football/player/garrett-wilson"
+    },
+    {
+      "rank": 44,
+      "player": "DeVonta Smith",
+      "position": "WR",
+      "team": "PHI",
+      "value": 5521,
+      "player_url": "https://dynatyze.com/football/player/devonta-smith"
+    },
+    {
+      "rank": 45,
+      "player": "Luther Burden III",
+      "position": "WR",
+      "team": "CHI",
+      "value": 5492,
+      "player_url": "https://dynatyze.com/football/player/luther-burden-iii"
+    },
+    {
+      "rank": 46,
+      "player": "Fernando Mendoza",
+      "position": "QB",
+      "team": "LV",
+      "value": 5331,
+      "player_url": "https://dynatyze.com/football/player/fernando-mendoza"
+    },
+    {
+      "rank": 47,
+      "player": "Zay Flowers",
+      "position": "WR",
+      "team": "BAL",
+      "value": 5324,
+      "player_url": "https://dynatyze.com/football/player/zay-flowers"
+    },
+    {
+      "rank": 48,
+      "player": "Jordan Love",
+      "position": "QB",
+      "team": "GB",
+      "value": 5322,
+      "player_url": "https://dynatyze.com/football/player/jordan-love"
+    },
+    {
+      "rank": 49,
+      "player": "A.J. Brown",
+      "position": "WR",
+      "team": "NE",
+      "value": 5301,
+      "player_url": "https://dynatyze.com/football/player/aj-brown"
+    },
+    {
+      "rank": 50,
+      "player": "Quinshon Judkins",
+      "position": "RB",
+      "team": "CLE",
+      "value": 5296,
+      "player_url": "https://dynatyze.com/football/player/quinshon-judkins"
+    },
+    {
+      "rank": 51,
+      "player": "Christian McCaffrey",
+      "position": "RB",
+      "team": "SF",
+      "value": 5280,
+      "player_url": "https://dynatyze.com/football/player/christian-mccaffrey"
+    },
+    {
+      "rank": 52,
+      "player": "Breece Hall",
+      "position": "RB",
+      "team": "NYJ",
+      "value": 5279,
+      "player_url": "https://dynatyze.com/football/player/breece-hall"
+    },
+    {
+      "rank": 53,
+      "player": "Saquon Barkley",
+      "position": "RB",
+      "team": "PHI",
+      "value": 5274,
+      "player_url": "https://dynatyze.com/football/player/saquon-barkley"
+    },
+    {
+      "rank": 54,
+      "player": "Rome Odunze",
+      "position": "WR",
+      "team": "CHI",
+      "value": 5249,
+      "player_url": "https://dynatyze.com/football/player/rome-odunze"
+    },
+    {
+      "rank": 55,
+      "player": "Jaylen Waddle",
+      "position": "WR",
+      "team": "DEN",
+      "value": 5164,
+      "player_url": "https://dynatyze.com/football/player/jaylen-waddle"
+    },
+    {
+      "rank": 56,
+      "player": "Tee Higgins",
+      "position": "WR",
+      "team": "CIN",
+      "value": 5090,
+      "player_url": "https://dynatyze.com/football/player/tee-higgins"
+    },
+    {
+      "rank": 57,
+      "player": "Tucker Kraft",
+      "position": "TE",
+      "team": "GB",
+      "value": 5041,
+      "player_url": "https://dynatyze.com/football/player/tucker-kraft"
+    },
+    {
+      "rank": 58,
+      "player": "Jadarian Price",
+      "position": "RB",
+      "team": "SEA",
+      "value": 5040,
+      "player_url": "https://dynatyze.com/football/player/jadarian-price"
+    },
+    {
+      "rank": 59,
+      "player": "Dak Prescott",
+      "position": "QB",
+      "team": "DAL",
+      "value": 4991,
+      "player_url": "https://dynatyze.com/football/player/dak-prescott"
+    },
+    {
+      "rank": 60,
+      "player": "TreVeyon Henderson",
+      "position": "RB",
+      "team": "NE",
+      "value": 4967,
+      "player_url": "https://dynatyze.com/football/player/treveyon-henderson"
+    },
+    {
+      "rank": 61,
+      "player": "Jordyn Tyson",
+      "position": "WR",
+      "team": "NO",
+      "value": 4945,
+      "player_url": "https://dynatyze.com/football/player/jordyn-tyson"
+    },
+    {
+      "rank": 62,
+      "player": "Rashee Rice",
+      "position": "WR",
+      "team": "KC",
+      "value": 4938,
+      "player_url": "https://dynatyze.com/football/player/rashee-rice"
+    },
+    {
+      "rank": 63,
+      "player": "Kyren Williams",
+      "position": "RB",
+      "team": "LAR",
+      "value": 4925,
+      "player_url": "https://dynatyze.com/football/player/kyren-williams"
+    },
+    {
+      "rank": 64,
+      "player": "Tyler Shough",
+      "position": "QB",
+      "team": "NO",
+      "value": 4814,
+      "player_url": "https://dynatyze.com/football/player/tyler-shough"
+    },
+    {
+      "rank": 65,
+      "player": "Jameson Williams",
+      "position": "WR",
+      "team": "DET",
+      "value": 4810,
+      "player_url": "https://dynatyze.com/football/player/jameson-williams"
+    },
+    {
+      "rank": 66,
+      "player": "Makai Lemon",
+      "position": "WR",
+      "team": "PHI",
+      "value": 4797,
+      "player_url": "https://dynatyze.com/football/player/makai-lemon"
+    },
+    {
+      "rank": 67,
+      "player": "Cam Ward",
+      "position": "QB",
+      "team": "TEN",
+      "value": 4754,
+      "player_url": "https://dynatyze.com/football/player/cam-ward"
+    },
+    {
+      "rank": 68,
+      "player": "Marvin Harrison Jr.",
+      "position": "WR",
+      "team": "ARI",
+      "value": 4744,
+      "player_url": "https://dynatyze.com/football/player/marvin-harrison-jr"
+    },
+    {
+      "rank": 69,
+      "player": "Javonte Williams",
+      "position": "RB",
+      "team": "DAL",
+      "value": 4737,
+      "player_url": "https://dynatyze.com/football/player/javonte-williams"
+    },
+    {
+      "rank": 70,
+      "player": "K.C. Concepcion",
+      "position": "WR",
+      "team": "CLE",
+      "value": 4720,
+      "player_url": "https://dynatyze.com/football/player/kc-concepcion"
+    },
+    {
+      "rank": 71,
+      "player": "Harold Fannin Jr.",
+      "position": "TE",
+      "team": "CLE",
+      "value": 4695,
+      "player_url": "https://dynatyze.com/football/player/harold-fannin-jr"
+    },
+    {
+      "rank": 72,
+      "player": "Cam Skattebo",
+      "position": "RB",
+      "team": "NYG",
+      "value": 4678,
+      "player_url": "https://dynatyze.com/football/player/cam-skattebo"
+    },
+    {
+      "rank": 73,
+      "player": "Jared Goff",
+      "position": "QB",
+      "team": "DET",
+      "value": 4641,
+      "player_url": "https://dynatyze.com/football/player/jared-goff"
+    },
+    {
+      "rank": 74,
+      "player": "Bucky Irving",
+      "position": "RB",
+      "team": "TB",
+      "value": 4627,
+      "player_url": "https://dynatyze.com/football/player/bucky-irving"
+    },
+    {
+      "rank": 75,
+      "player": "C.J. Stroud",
+      "position": "QB",
+      "team": "HOU",
+      "value": 4563,
+      "player_url": "https://dynatyze.com/football/player/cj-stroud"
+    }
+  ]
+}

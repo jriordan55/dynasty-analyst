@@ -14,7 +14,11 @@ from src.fantasycalc import FantasyCalcClient
 from src.market_insights import MarketInsightsClient
 
 CACHE_DIR = Path(__file__).resolve().parents[1] / "data" / "cache"
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 DYNATYZE_TTL = 6 * 3600
+BUNDLE_FILES = {
+    "dynasty": DATA_DIR / "dynatyze_dynasty_rankings.json",
+}
 
 _ROW = re.compile(
     r"^\|\s*(?P<rank>\d+)\s*\|\s*\[(?P<player>[^\]]+)\]"
@@ -43,6 +47,28 @@ def _cache_path(kind: str) -> Path:
     return CACHE_DIR / f"dynatyze_{kind}_rankings.md"
 
 
+def _rows_from_bundled(kind: str) -> tuple[list[RankRow], str]:
+    path = BUNDLE_FILES.get(kind)
+    if not path or not path.exists():
+        return [], ""
+    import json
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    rows = [
+        RankRow(
+            rank=item["rank"],
+            player=item["player"],
+            position=item["position"],
+            team=item["team"],
+            value=item["value"],
+            source="Dynatyze",
+            player_url=item.get("player_url", ""),
+        )
+        for item in payload.get("rows", [])
+    ]
+    return rows, payload.get("updated", "")
+
+
 def fetch_dynatyze_rankings(kind: str = "dynasty", force: bool = False) -> tuple[list[RankRow], str]:
     """Pull public Dynatyze markdown rankings (top 75)."""
     urls = {
@@ -54,15 +80,21 @@ def fetch_dynatyze_rankings(kind: str = "dynasty", force: bool = False) -> tuple
     text = ""
     updated = ""
 
-    if not force and cache.exists() and time.time() - cache.stat().st_mtime < DYNATYZE_TTL:
-        text = cache.read_text(encoding="utf-8")
-    else:
-        with httpx.Client(timeout=30) as client:
-            resp = client.get(url, headers={"Accept": "text/markdown"})
-            resp.raise_for_status()
-            text = resp.text
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache.write_text(text, encoding="utf-8")
+    try:
+        if not force and cache.exists() and time.time() - cache.stat().st_mtime < DYNATYZE_TTL:
+            text = cache.read_text(encoding="utf-8")
+        else:
+            with httpx.Client(timeout=30) as client:
+                resp = client.get(url, headers={"Accept": "text/markdown"})
+                resp.raise_for_status()
+                text = resp.text
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache.write_text(text, encoding="utf-8")
+    except Exception:
+        bundled, bundled_updated = _rows_from_bundled(kind)
+        if bundled:
+            return bundled, bundled_updated
+        raise
 
     m = re.search(r"Updated:\s*(.+)", text)
     if m:
@@ -84,6 +116,10 @@ def fetch_dynatyze_rankings(kind: str = "dynasty", force: bool = False) -> tuple
                 player_url=hit.group("url"),
             )
         )
+    if not rows:
+        bundled, bundled_updated = _rows_from_bundled(kind)
+        if bundled:
+            return bundled, bundled_updated
     return rows, updated
 
 
