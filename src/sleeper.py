@@ -210,10 +210,14 @@ class SleeperClient:
         total_rosters = draft.get("settings", {}).get("teams") or len(slot_by_user) or 12
         rounds = draft.get("settings", {}).get("rounds") or 16
         total_picks = total_rosters * rounds
-        completed = len([p for p in picks if p.get("player_id")])
+        completed = len({p["pick_no"] for p in picks if p.get("pick_no") and p.get("player_id")})
 
         my_slot = slot_by_user.get(my_user_id or "", None)
-        on_clock = _pick_on_clock(picks, slot_by_user, user_map, total_rosters)
+        on_clock = _pick_on_clock(
+            picks, slot_by_user, user_map, total_rosters,
+            draft_status=draft.get("status") or draft_meta.get("status"),
+            rounds=rounds,
+        )
 
         return {
             "draft_id": draft_id,
@@ -317,12 +321,22 @@ def _pick_on_clock(
     slot_by_user: dict[str, int],
     user_map: dict[str, dict],
     teams: int,
+    draft_status: str | None = None,
+    rounds: int = 16,
 ) -> dict | None:
     """Determine who is on the clock for snake drafts."""
     if not slot_by_user:
         return None
 
-    pick_no = len(picks) + 1
+    from src.draft import current_draft_pick
+
+    draft_stub = {
+        "status": draft_status,
+        "teams": teams,
+        "rounds": rounds,
+        "picks": picks,
+    }
+    pick_no = current_draft_pick(draft_stub, teams)
     round_no = (pick_no - 1) // teams + 1
     pos_in_round = (pick_no - 1) % teams
     slot = pos_in_round + 1 if round_no % 2 == 1 else teams - pos_in_round

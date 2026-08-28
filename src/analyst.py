@@ -332,8 +332,12 @@ class DynastyAnalyst:
         if my_slot is None and draft:
             my_slot = draft.get("my_slot")
         teams = draft.get("teams") or len(draft.get("draft_order") or {}) or 12
+        snapshot = self._ensure_snapshot()
+        my_team = next((t for t in snapshot.get("teams", []) if t.get("is_mine")), None)
+        roster_id = my_team.get("roster_id") if my_team else None
         return recommend_for_my_slot(
             board, draft, my_slot, teams=teams, on_clock=on_clock, limit=limit,
+            roster_id=roster_id,
         )
 
     def manager_draft_profiles(self) -> list:

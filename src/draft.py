@@ -38,14 +38,15 @@ def upcoming_pick_numbers(
     from_pick: int,
     count: int = 4,
     max_rounds: int = 16,
+    skip_picks: set[int] | None = None,
 ) -> list[int]:
     """Your next snake pick numbers starting at or after from_pick."""
+    skip = skip_picks or set()
     picks: list[int] = []
     for rnd in range(1, max_rounds + 1):
         p = pick_no_for_slot_round(slot, rnd, teams)
-        if p >= from_pick:
+        if p >= from_pick and p not in skip:
             picks.append(p)
-    picks.sort()
     return picks[:count]
 
 
@@ -53,6 +54,42 @@ def draft_teams(draft: dict | None, fallback: int = 12) -> int:
     if not draft:
         return fallback
     return draft.get("teams") or len(draft.get("draft_order") or {}) or fallback
+
+
+def filled_pick_numbers(draft: dict | None) -> set[int]:
+    """Pick numbers that already have a player assigned."""
+    if not draft:
+        return set()
+    return {
+        p["pick_no"]
+        for p in draft.get("picks", [])
+        if p.get("pick_no") and p.get("player_id")
+    }
+
+
+def current_draft_pick(draft: dict | None, teams: int = 12) -> int:
+    """Next pick number on the board (1 before the draft starts)."""
+    if not draft or is_pre_draft(draft):
+        return 1
+    teams = draft_teams(draft, teams)
+    rounds = draft.get("rounds") or 16
+    total = teams * rounds
+    filled = filled_pick_numbers(draft)
+    for pick_no in range(1, total + 1):
+        if pick_no not in filled:
+            return pick_no
+    return total + 1
+
+
+def roster_owned_pick_numbers(draft: dict | None, roster_id: int | None) -> set[int]:
+    """Pick numbers already assigned to this roster (keepers + live picks)."""
+    if not draft or roster_id is None:
+        return set()
+    return {
+        p["pick_no"]
+        for p in draft.get("picks", [])
+        if p.get("pick_no") and p.get("player_id") and p.get("roster_id") == roster_id
+    }
 
 
 def adp_window_for_pick(pick_no: int, on_clock: bool) -> tuple[int, int]:
@@ -464,27 +501,31 @@ def recommend_for_my_slot(
     teams: int = 12,
     on_clock: bool = False,
     limit: int = 5,
+    roster_id: int | None = None,
 ) -> tuple[list[PickRecommendation], list[int], int | None]:
     """Pick recommendations tied to your snake draft slot."""
     teams = draft_teams(draft, teams)
     if not my_slot:
         return recommend_picks(board, limit=limit, pre_draft=is_pre_draft(draft)), [], None
 
-    current_pick = 1
-    if draft:
-        current_pick = len(draft.get("picks", [])) + 1
+    current_pick = current_draft_pick(draft, teams)
+    owned = roster_owned_pick_numbers(draft, roster_id)
 
     if on_clock:
         target = current_pick
     else:
-        upcoming = upcoming_pick_numbers(my_slot, teams, current_pick, count=1)
+        upcoming = upcoming_pick_numbers(
+            my_slot, teams, current_pick, count=1, skip_picks=owned,
+        )
         target = upcoming[0] if upcoming else pick_no_for_slot_round(my_slot, 1, teams)
 
     recs = recommend_picks(
         board, limit=limit, target_pick=target, on_clock=on_clock, teams=teams,
         pre_draft=is_pre_draft(draft),
     )
-    next_picks = upcoming_pick_numbers(my_slot, teams, current_pick, count=4)
+    next_picks = upcoming_pick_numbers(
+        my_slot, teams, current_pick, count=4, skip_picks=owned,
+    )
     return recs, next_picks, target
 
 
