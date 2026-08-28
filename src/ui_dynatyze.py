@@ -147,6 +147,15 @@ def inject_dynatyze_shell() -> None:
     )
 
 
+def _embed_html(body: str, css: str = "", height: int = 720) -> None:
+    """Render HTML in an iframe — works on Streamlit Cloud (unlike st.html height kwarg)."""
+    doc = (
+        f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<style>{css}</style></head><body>{body}</body></html>"
+    )
+    components.html(doc, height=height, scrolling=True)
+
+
 def render_top_nav(current: str) -> None:
     st.markdown(
         '<div style="background:#000;border-bottom:1px solid #1f2937;padding:0.5rem 0 0.75rem 0;margin:-0.5rem 0 0.5rem 0;">'
@@ -257,7 +266,7 @@ def render_dashboard_home(data: DynatyzeDashboard) -> None:
             f'<span class="dz-card-badge">{html.escape(card.badge)}</span></div>'
         )
     html_block += "</div>"
-    st.markdown(f"<style>{DASHBOARD_CSS}</style>{html_block}", unsafe_allow_html=True)
+    _embed_html(html_block, css=DASHBOARD_CSS, height=780)
 
 
 def _ordinal_html(n: int) -> str:
