@@ -10,7 +10,15 @@ import streamlit as st
 
 from src.analyst import DynastyAnalyst, load_config
 from src.draft import format_pick_label, is_pre_draft
-from src.my_league import build_dashboard
+from src.ui_dynatyze import (
+    init_navigation,
+    inject_dynatyze_shell,
+    render_dashboard_home,
+    render_sidebar_league,
+    render_top_nav,
+)
+from src.dynatyze_dashboard import build_dynatyze_dashboard
+from src.my_league import build_dashboard, build_roster_rows, section_counts
 from src.news import get_news_client
 from src.ui_my_league import render_my_league
 from src.ui_platform import (
@@ -101,6 +109,7 @@ def load_grades(config_json: str) -> list[dict]:
 
 def _inject_styles() -> None:
     inject_dynatyze_styles()
+    inject_dynatyze_shell()
     st.markdown(
         """
         <style>
@@ -318,7 +327,7 @@ def _draft_context(analyst: DynastyAnalyst, config: dict) -> dict:
 # ── Page setup ──────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Gridiron Analyst",
+    page_title="Dynatyze · Dynasty Analyst",
     page_icon="🏈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -418,74 +427,79 @@ show_fit = not is_pre_draft(draft)
 _, my_team_data = analyst._ensure_loaded()
 dash = build_dashboard(analyst._ensure_snapshot(), my_team_data, config)
 grades = load_grades(json.dumps(config, sort_keys=True))
+init_navigation()
+
+roster_rows = build_roster_rows(my_team_data, analyst.intel(), analyst.adp_map, grades)
+nav_counts = section_counts(roster_rows, analyst._ensure_snapshot(), analyst.waiver_targets())
+
+if st.session_state.get("sync_requested"):
+    st.session_state.sync_requested = False
+    try:
+        with st.spinner("Syncing..."):
+            analyst.sync()
+            analyst.refresh_draft()
+            analyst.news.close()
+        load_grades.clear()
+        load_live_draft.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(str(e))
 
 with st.sidebar:
     st.divider()
-    st.markdown(f"**{dash.league_name}**")
-    st.caption(f"{dash.format_label} · {dash.num_teams} teams · {dash.season}")
-    st.markdown(f"**{dash.username}**")
-    st.caption(f"{dash.record} · Rank #{dash.rank} · {dash.status}")
-    if my_slot:
-        st.caption(f"Draft slot **{my_slot}**")
-    if ctx["target_pick"]:
-        st.caption(f"Next pick: **{format_pick_label(ctx['target_pick'], teams)}**")
-    if ctx["plan"].remaining_needs:
-        st.caption(f"Needs: {', '.join(ctx['plan'].remaining_needs[:3])}")
-    st.caption(f"App build **{APP_BUILD}**")
+    render_sidebar_league(dash, nav_counts, st.session_state.league_section)
 
-st.title(dash.team_name)
-st.caption(f"{dash.league_name} · synced from Sleeper")
+render_top_nav(st.session_state.page)
+page = st.session_state.page
 
-tab_home, tab_rankings, tab_analytics, tab_tools, tab_draft, tab_team, tab_league, tab_trade, tab_news = st.tabs(
-    ["Home", "Rankings", "Analytics", "Tools", "Draft", "My Team", "League", "Trade Calc", "News"]
-)
+# ── My Leagues / Dashboard ───────────────────────────────────────────────────
 
-# ── Home ──────────────────────────────────────────────────────────────────────
-
-with tab_home:
+if page == "dashboard":
     try:
-        my = overview.get("my_needs")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Draft slot", my_slot or "—")
-        c2.metric(
-            "Next pick",
-            format_pick_label(ctx["target_pick"], teams).split(" (")[0] if ctx["target_pick"] else "—",
-        )
-        c3.metric("Top need", ", ".join(ctx["plan"].remaining_needs[:2]) or "Balanced")
+        if st.session_state.league_section == "Dashboard":
+            from src.ui_platform import _fc_client
 
-        if ctx["keepers"]:
-            st.caption("Draft keepers (from Sleeper): " + " · ".join(f"`{k}`" for k in ctx["keepers"]))
-
-        st.divider()
-        left, right = st.columns([3, 2])
-
-        with left:
-            if ctx["target_pick"]:
-                st.subheader(f"Best at {format_pick_label(ctx['target_pick'], teams)}")
-            else:
-                st.subheader("Top picks for your build")
-            if ctx["next_picks"]:
-                upcoming = " → ".join(p.split(" (")[0] for p in [format_pick_label(p, teams) for p in ctx["next_picks"][:3]])
-                st.caption(f"Upcoming: {upcoming}")
-            _render_pick_cards(ctx["recs"][:3], show_fit=show_fit)
-
-        with right:
-            st.subheader("Breakout watch")
-            _render_upside_cards(ctx["upside"], limit=4)
-
-        sells = analyst.sell_candidates()
-        if sells:
-            st.divider()
-            st.subheader("Action items")
-            for s in sells[:3]:
-                icon = {"high": "🔴", "medium": "🟡", "low": "⚪"}.get(s.urgency, "")
-                st.markdown(f"{icon} Consider selling **{s.player}** — {_truncate(s.reason, 80)}")
+            dz = build_dynatyze_dashboard(
+                analyst._ensure_snapshot(),
+                my_team_data,
+                config,
+                _fc_client(analyst, config),
+                grades,
+                analyst.waiver_targets(),
+                analyst.intel(),
+                analyst.adp_map,
+                dash,
+            )
+            render_dashboard_home(dz)
+            st.markdown("##### Quick actions")
+            q1, q2, q3, q4 = st.columns(4)
+            with q1:
+                if st.button(f"Lineup · {dz.injury_count} hurt", use_container_width=True):
+                    st.session_state.league_section = "Start/Sit"
+                    st.rerun()
+            with q2:
+                if st.button("Waivers", use_container_width=True):
+                    st.session_state.league_section = "Waiver Wire"
+                    st.rerun()
+            with q3:
+                if st.button("Trades", use_container_width=True):
+                    st.session_state.page = "trade"
+                    st.rerun()
+            with q4:
+                if st.button(f"League · #{dz.value_rank}", use_container_width=True):
+                    st.session_state.page = "league"
+                    st.rerun()
+        else:
+            render_my_league(
+                analyst, config, ctx, grades,
+                section_override=st.session_state.league_section,
+            )
     except Exception as e:
-        st.error(f"Home failed: {e}")
+        st.error(f"Dashboard failed: {e}")
 
-# ── Rankings ──────────────────────────────────────────────────────────────────
+# ── Rankings ─────────────────────────────────────────────────────────────────
 
-with tab_rankings:
+elif page == "rankings":
     try:
         render_rankings(analyst, config)
     except Exception as e:
@@ -493,7 +507,7 @@ with tab_rankings:
 
 # ── Analytics ─────────────────────────────────────────────────────────────────
 
-with tab_analytics:
+elif page == "analytics":
     try:
         render_analytics(analyst, config)
     except Exception as e:
@@ -501,7 +515,7 @@ with tab_analytics:
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
-with tab_tools:
+elif page == "tools":
     try:
         render_tools(analyst, config, ctx)
     except Exception as e:
@@ -509,7 +523,7 @@ with tab_tools:
 
 # ── Draft ─────────────────────────────────────────────────────────────────────
 
-with tab_draft:
+elif page == "draft":
     try:
         view = st.radio(
             "Show",
@@ -641,15 +655,15 @@ with tab_draft:
 
 # ── My Team (League Hub) ──────────────────────────────────────────────────────
 
-with tab_team:
+elif page == "trade":
     try:
-        render_my_league(analyst, config, ctx, grades)
+        render_trade_calculator(analyst, config)
     except Exception as e:
-        st.error(f"My Team failed: {e}")
+        st.error(f"Trade calculator failed: {e}")
 
-# ── League ────────────────────────────────────────────────────────────────────
+# ── League wire ───────────────────────────────────────────────────────────────
 
-with tab_league:
+elif page == "league":
     try:
         section = st.radio(
             "Section",
@@ -814,17 +828,7 @@ with tab_league:
     except Exception as e:
         st.error(f"League failed: {e}")
 
-# ── Trade Calc ────────────────────────────────────────────────────────────────
-
-with tab_trade:
-    try:
-        render_trade_calculator(analyst, config)
-    except Exception as e:
-        st.error(f"Trade calculator failed: {e}")
-
-# ── News ──────────────────────────────────────────────────────────────────────
-
-with tab_news:
+elif page == "news":
     try:
         section = st.radio(
             "Section",

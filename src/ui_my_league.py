@@ -27,7 +27,7 @@ def _cell(v, fallback: str = "—") -> str:
     return str(v)
 
 
-def render_my_league(analyst, config: dict, ctx: dict, grades: list[dict]) -> None:
+def render_my_league(analyst, config: dict, ctx: dict, grades: list[dict], section_override: str | None = None) -> None:
     snapshot, my_team = analyst._ensure_loaded()
     intel = analyst.intel()
     fc = _fc_client(analyst, config)
@@ -37,17 +37,18 @@ def render_my_league(analyst, config: dict, ctx: dict, grades: list[dict]) -> No
     counts = section_counts(roster, snapshot, analyst.waiver_targets())
     wire = waiver_wire_snapshot(snapshot)
 
-    # Header card
-    h1, h2, h3, h4 = st.columns([3, 1, 1, 1])
-    with h1:
-        st.markdown(f"### {dash.league_name}")
-        st.caption(f"{dash.format_label} · {dash.num_teams} teams · {dash.season}")
-    h2.metric("Record", dash.record)
-    h3.metric("Rank", f"#{dash.rank}")
-    h4.metric("Points", f"{dash.fpts:.1f}" if dash.fpts else "—")
+    if not section_override:
+        # Header card
+        h1, h2, h3, h4 = st.columns([3, 1, 1, 1])
+        with h1:
+            st.markdown(f"### {dash.league_name}")
+            st.caption(f"{dash.format_label} · {dash.num_teams} teams · {dash.season}")
+        h2.metric("Record", dash.record)
+        h3.metric("Rank", f"#{dash.rank}")
+        h4.metric("Points", f"{dash.fpts:.1f}" if dash.fpts else "—")
 
-    st.markdown(f"**{dash.username}** · {dash.team_name} · _{dash.status}_")
-    st.divider()
+        st.markdown(f"**{dash.username}** · {dash.team_name} · _{dash.status}_")
+        st.divider()
 
     sections = [
         ("Dashboard", None),
@@ -65,16 +66,18 @@ def render_my_league(analyst, config: dict, ctx: dict, grades: list[dict]) -> No
     if league_has_keepers(config, snapshot):
         sections.insert(1, ("Keepers", len(analyst.get_keepers())))
 
-    labels = [f"{name} ({n})" if n is not None else name for name, n in sections]
-    label_to_key = {lbl: sections[i][0] for i, lbl in enumerate(labels)}
-
-    section = st.radio(
-        "My League",
-        labels,
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-    key = label_to_key[section]
+    if section_override:
+        key = section_override
+    else:
+        labels = [f"{name} ({n})" if n is not None else name for name, n in sections]
+        label_to_key = {lbl: sections[i][0] for i, lbl in enumerate(labels)}
+        section = st.radio(
+            "My League",
+            labels,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        key = label_to_key[section]
 
     if key == "Dashboard":
         c1, c2 = st.columns(2)
