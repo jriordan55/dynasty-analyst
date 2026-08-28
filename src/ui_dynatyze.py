@@ -214,8 +214,7 @@ def render_top_nav(current: str) -> None:
 
 def _sidebar_section(title: str) -> None:
     st.markdown(
-        f'<div class="dz-sb-section"><span class="dz-sb-section-dot"></span>{html.escape(title)}</div>'
-        f"<style>{SIDEBAR_CSS}</style>",
+        f'<div class="dz-sb-section"><span class="dz-sb-section-dot"></span>{html.escape(title)}</div>',
         unsafe_allow_html=True,
     )
 
