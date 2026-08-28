@@ -327,7 +327,7 @@ def _draft_context(analyst: DynastyAnalyst, config: dict) -> dict:
 # ── Page setup ──────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="Dynatyze · Dynasty Analyst",
+    page_title=f"Dynatyze · Dynasty Analyst [{APP_BUILD}]",
     page_icon="🏈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -450,6 +450,12 @@ with st.sidebar:
     render_sidebar_league(dash, nav_counts, st.session_state.league_section)
 
 render_top_nav(st.session_state.page)
+st.markdown(
+    f'<p style="color:#6b7280;font-size:0.68rem;margin:-0.25rem 0 0.75rem 0;">'
+    f'Build <b style="color:#10b981;">{APP_BUILD}</b> · '
+    f'Use sidebar <b>Start/Sit</b>, <b>My Team</b>, <b>Depth Chart</b> for the new Dynatyze pages</p>',
+    unsafe_allow_html=True,
+)
 page = st.session_state.page
 
 # ── My Leagues / Dashboard ───────────────────────────────────────────────────
