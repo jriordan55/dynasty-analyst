@@ -257,13 +257,7 @@ def render_dashboard_home(data: DynatyzeDashboard) -> None:
             f'<span class="dz-card-badge">{html.escape(card.badge)}</span></div>'
         )
     html_block += "</div>"
-
-    render = getattr(st, "html", None)
-    doc = f"<!DOCTYPE html><html><head><style>{DASHBOARD_CSS}</style></head><body>{html_block}</body></html>"
-    if render:
-        render(doc, height=720, scrolling=False)
-    else:
-        st.markdown(html_block, unsafe_allow_html=True)
+    st.markdown(f"<style>{DASHBOARD_CSS}</style>{html_block}", unsafe_allow_html=True)
 
 
 def _ordinal_html(n: int) -> str:
