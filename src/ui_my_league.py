@@ -66,6 +66,9 @@ def render_my_league(analyst, config: dict, ctx: dict, grades: list[dict], secti
     if league_has_keepers(config, snapshot):
         sections.insert(1, ("Keepers", len(analyst.get_keepers())))
 
+    if section_override and section_override != "Dashboard":
+        st.markdown(f"## {section_override}")
+
     if section_override:
         key = section_override
     else:

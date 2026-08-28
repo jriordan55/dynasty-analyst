@@ -56,16 +56,18 @@ DASHBOARD_CSS = """
 body { margin: 0; background: transparent; color: #e5e7eb; font-family: Montserrat, system-ui, sans-serif; }
 """
 
-SIDEBAR_SECTIONS = [
-    ("Dashboard", "dashboard"),
-    ("My Team", "My Team"),
-    ("Injury Report", "Injury Report"),
-    ("Bye Weeks", "Bye Weeks"),
-    ("Start/Sit", "Start/Sit"),
-    ("Depth Chart", "Depth Chart"),
-    ("Bench Ledger", "Bench Ledger"),
-    ("Waiver Wire", "Waiver Wire"),
-]
+# Icons (outline-style unicode approximations for Streamlit buttons)
+ICO = {
+    "Dashboard": "⌂",
+    "My Team": "★",
+    "Injury Report": "♡",
+    "Bye Weeks": "▦",
+    "Start/Sit": "⚡",
+    "Depth Chart": "▤",
+    "Bench Ledger": "◧",
+    "Waiver Wire": "＋",
+    "Replacement Radar": "◎",
+}
 
 
 def inject_dynatyze_shell() -> None:
@@ -134,14 +136,49 @@ def inject_dynatyze_shell() -> None:
         .dz-card-sub { color: #6b7280; font-size: 0.72rem; margin: 0; }
         .dz-card-badge { display: inline-block; background: #111827; border: 1px solid #374151; color: #d1d5db; font-size: 0.62rem; padding: 0.12rem 0.45rem; border-radius: 999px; margin-top: 0.35rem; }
         .dz-updated { color: #fbbf24; font-size: 0.62rem; letter-spacing: 0.08em; text-transform: uppercase; text-align: right; margin-bottom: 0.35rem; }
-        div[data-testid="stSidebar"] button[kind="secondary"] {
-            width: 100%; text-align: left; background: transparent !important; color: #d1d5db !important;
-            border: 1px solid #374151 !important; margin-bottom: 0.25rem;
+        section[data-testid="stSidebar"] .stButton > button {
+            background: transparent !important;
+            border: none !important;
+            border-left: 2px solid rgba(16, 185, 129, 0.22) !important;
+            border-radius: 0 0.45rem 0.45rem 0 !important;
+            color: #d1d5db !important;
+            font-size: 0.8rem !important;
+            font-weight: 500 !important;
+            padding: 0.42rem 0.55rem !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            min-height: 2rem !important;
+            width: 100% !important;
+            text-align: left !important;
         }
-        div[data-testid="stSidebar"] button[kind="primary"] {
-            width: 100%; text-align: left; background: #111827 !important; color: #10b981 !important;
-            border: 1px solid #10b981 !important; margin-bottom: 0.25rem;
+        section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+            background: rgba(16, 185, 129, 0.14) !important;
+            border: none !important;
+            border-left: 4px solid #10b981 !important;
+            color: #ffffff !important;
         }
+        section[data-testid="stSidebar"] .stButton > button[kind="secondary"] {
+            background: transparent !important;
+            border: none !important;
+            border-left: 2px solid rgba(16, 185, 129, 0.22) !important;
+            color: #d1d5db !important;
+        }
+        section[data-testid="stSidebar"] .stButton > button:hover {
+            background: rgba(255, 255, 255, 0.04) !important;
+            color: #fff !important;
+        }
+        .dz-sb-section {
+            color: #6b7280; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.14em;
+            text-transform: uppercase; margin: 1rem 0 0.35rem 0.15rem;
+            display: flex; align-items: center; gap: 0.35rem;
+        }
+        .dz-sb-section-dot { width: 5px; height: 5px; border-radius: 999px; background: #10b981; display: inline-block; }
+        .dz-sb-meta { color: #6b7280; font-size: 0.68rem; text-align: right; margin: 0.5rem 0 0 0; line-height: 1.25; }
+        .dz-sb-meta b { color: #f3f4f6; font-weight: 600; }
+        .dz-sb-league { color: #f9fafb; font-size: 0.92rem; font-weight: 700; margin: 0 0 0.15rem 0; }
+        .dz-sb-sub { color: #6b7280; font-size: 0.72rem; margin: 0 0 0.75rem 0; }
+        .dz-sb-team { color: #e5e7eb; font-size: 0.8rem; font-weight: 600; margin: 0.75rem 0 0.15rem 0; }
+        .dz-sb-sync-note { color: #6b7280; font-size: 0.62rem; margin-top: 0.5rem; text-transform: uppercase; letter-spacing: 0.06em; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -175,33 +212,83 @@ def render_top_nav(current: str) -> None:
                 st.rerun()
 
 
-def render_sidebar_league(dash, counts: dict, current_section: str) -> None:
-    st.markdown(f"### {dash.league_name}")
-    st.caption(f"{dash.format_label} · {dash.num_teams} teams · {dash.season}")
-    st.text_input("Jump to any tool…", placeholder="Search", label_visibility="collapsed", disabled=True)
-    st.markdown(f"**{dash.team_name}**")
-    st.caption(f"{dash.record} · #{dash.rank}")
+def _sidebar_section(title: str) -> None:
+    st.markdown(
+        f'<div class="dz-sb-section"><span class="dz-sb-section-dot"></span>{html.escape(title)}</div>'
+        f"<style>{SIDEBAR_CSS}</style>",
+        unsafe_allow_html=True,
+    )
 
-    badges = {
-        "Injury Report": counts.get("injuries", 0),
-        "Waiver Wire": counts.get("waiver_adds", 0),
-    }
-    for label, section_key in SIDEBAR_SECTIONS:
-        badge = badges.get(section_key)
-        text = f"{label} ({badge})" if badge else label
-        btn_type = "primary" if section_key == current_section else "secondary"
-        if st.button(text, key=f"sb_{section_key}", use_container_width=True, type=btn_type):
+
+def _sidebar_nav_row(
+    label: str,
+    section_key: str,
+    current_section: str,
+    meta_html: str = "",
+) -> None:
+    icon = ICO.get(label, "•")
+    active = section_key == current_section and st.session_state.get("page") == "dashboard"
+    c1, c2 = st.columns([1.15, 0.85], gap="small")
+    with c1:
+        if st.button(
+            f"{icon}  {label}",
+            key=f"sb_{section_key.replace(' ', '_')}",
+            use_container_width=True,
+            type="primary" if active else "secondary",
+        ):
             st.session_state.page = "dashboard"
             st.session_state.league_section = section_key
             st.rerun()
+    with c2:
+        if meta_html:
+            st.markdown(meta_html, unsafe_allow_html=True)
 
-    if st.button("League Wire", key="sb_league_wire", use_container_width=True, type="secondary"):
-        st.session_state.page = "league"
-        st.rerun()
 
+def render_sidebar_league(dash, counts: dict, current_section: str) -> None:
+    st.markdown(f'<p class="dz-sb-league">{html.escape(dash.league_name)}</p>', unsafe_allow_html=True)
+    st.markdown(
+        f'<p class="dz-sb-sub">{html.escape(dash.format_label)} · {dash.num_teams} teams · {html.escape(dash.season)}</p>',
+        unsafe_allow_html=True,
+    )
+    st.text_input("Jump to any tool…", placeholder="Search", label_visibility="collapsed", disabled=True)
+    st.markdown(f'<p class="dz-sb-team">{html.escape(dash.team_name)}</p>', unsafe_allow_html=True)
+    st.caption(f"{dash.record} · #{dash.rank}")
+
+    record_meta = f'<div class="dz-sb-meta"><b>{html.escape(dash.record)}</b> {html.escape(dash.status)}</div>'
+    _sidebar_nav_row("Dashboard", "Dashboard", current_section, record_meta)
+
+    _sidebar_section("LINEUP")
+    _sidebar_nav_row(
+        "My Team", "My Team", current_section,
+        f'<div class="dz-sb-meta"><b>{counts.get("roster", 0)}</b> players</div>',
+    )
+    _sidebar_nav_row(
+        "Injury Report", "Injury Report", current_section,
+        f'<div class="dz-sb-meta"><b>{counts.get("injuries", 0)}</b> flagged</div>',
+    )
+    _sidebar_nav_row("Bye Weeks", "Bye Weeks", current_section)
+    _sidebar_nav_row("Start/Sit", "Start/Sit", current_section)
+    _sidebar_nav_row(
+        "Depth Chart", "Depth Chart", current_section,
+        f'<div class="dz-sb-meta"><b>{counts.get("depth", 0)}</b> players</div>',
+    )
+    _sidebar_nav_row("Bench Ledger", "Bench Ledger", current_section)
+
+    _sidebar_section("THE WIRE")
+    adds = counts.get("waiver_adds", 0)
+    _sidebar_nav_row(
+        "Waiver Wire", "Waiver Wire", current_section,
+        f'<div class="dz-sb-meta"><b>{adds}</b> adds · 30d</div>',
+    )
+    _sidebar_nav_row("Replacement Radar", "Replacement Radar", current_section)
+
+    st.markdown("<div style='height:0.75rem'></div>", unsafe_allow_html=True)
     if st.button("SYNC", use_container_width=True, type="primary"):
         st.session_state.sync_requested = True
-    st.caption(f"Updated recently · Build {APP_BUILD}")
+    st.markdown(
+        f'<p class="dz-sb-sync-note">Updated recently · Build {html.escape(APP_BUILD)}</p>',
+        unsafe_allow_html=True,
+    )
 
 
 def _face_html(face) -> str:
