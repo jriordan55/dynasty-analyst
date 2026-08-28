@@ -7,17 +7,30 @@ import streamlit as st
 
 from src.draft import league_has_keepers
 from src.my_league import (
-    bench_ledger,
     build_dashboard,
     build_roster_rows,
     bye_week_board,
-    depth_chart_rows,
-    injury_report,
     section_counts,
     waiver_wire_snapshot,
 )
-from src.platform import start_sit_compare
+from src.dynatyze_pages import (
+    build_bench_ledger_page,
+    build_bye_page,
+    build_injury_page,
+    build_league_depth_chart,
+    build_my_team_page,
+    build_start_sit_page,
+)
 from src.trade_assets import recommend_keepers
+from src.ui_dynatyze_pages import (
+    render_depth_chart_page,
+    render_injury_page,
+    render_my_team_page,
+    render_player_list_page,
+    render_replacement_radar_page,
+    render_start_sit_page,
+    render_waiver_wire_page,
+)
 from src.ui_platform import _fc_client
 
 
@@ -65,9 +78,6 @@ def render_my_league(analyst, config: dict, ctx: dict, grades: list[dict], secti
     ]
     if league_has_keepers(config, snapshot):
         sections.insert(1, ("Keepers", len(analyst.get_keepers())))
-
-    if section_override and section_override != "Dashboard":
-        st.markdown(f"## {section_override}")
 
     if section_override:
         key = section_override
@@ -127,106 +137,40 @@ def render_my_league(analyst, config: dict, ctx: dict, grades: list[dict], secti
             st.info("No keeper league settings detected.")
 
     elif key == "My Team":
-        df = pd.DataFrame([{
-            "Player": r["name"],
-            "Pos": r["position"],
-            "NFL": r["nfl_team"],
-            "Role": r["status"],
-            "ADP": _cell(r["adp"]),
-            "Grade": r["grade"],
-            "Age": _cell(r["age"]),
-            "Bye": _cell(r["bye_week"]),
-            "Injury": _cell(r["injury"]),
-        } for r in roster])
-        st.dataframe(df, width="stretch", hide_index=True, height=480)
+        page = build_my_team_page(my_team, roster, fc, intel, grades)
+        render_my_team_page(page)
 
     elif key == "Injury Report":
-        flagged = injury_report(roster)
-        if not flagged:
-            st.success("No injury flags on your roster.")
-        else:
-            df = pd.DataFrame([{
-                "Player": r["name"],
-                "Pos": r["position"],
-                "NFL": r["nfl_team"],
-                "Status": r["injury"],
-                "Depth": _cell(r["depth_order"]),
-                "News": _cell(r.get("news")),
-            } for r in flagged])
-            st.dataframe(df, width="stretch", hide_index=True, height=360)
+        page = build_injury_page(my_team, roster, fc, intel, grades)
+        render_injury_page(page)
 
     elif key == "Bye Weeks":
-        byes = bye_week_board(roster)
-        st.caption("2025 NFL bye schedule by player NFL team")
-        df = pd.DataFrame([{
-            "Week": r["bye_week"],
-            "Player": r["name"],
-            "Pos": r["position"],
-            "NFL Team": r["nfl_team"],
-            "Starter": "✓" if r["starter"] else "",
-        } for r in byes])
-        st.dataframe(df, width="stretch", hide_index=True, height=480)
+        players = build_bye_page(roster, fc, intel, grades, my_team)
+        render_player_list_page(
+            "Bye Weeks", "▦", "2025 NFL bye schedule by player NFL team",
+            players, empty_msg="No bye weeks on your roster.",
+        )
 
     elif key == "Start/Sit":
-        names = [r["name"] for r in roster if r["position"] in {"QB", "RB", "WR", "TE"}]
-        if len(names) < 2:
-            st.info("Need at least two players to compare.")
-        else:
-            c1, c2 = st.columns(2)
-            a = c1.selectbox("Player A", names, key="ml_sit_a")
-            b = c2.selectbox("Player B", names, index=min(1, len(names) - 1), key="ml_sit_b")
-            result = start_sit_compare(grades, fc, a, b)
-            st.success(f"Start **{result['winner']}**")
-            c1.metric(a, f"Grade {result['a']['grade']}", f"FC {result['a']['fc']:,}")
-            c2.metric(b, f"Grade {result['b']['grade']}", f"FC {result['b']['fc']:,}")
+        page = build_start_sit_page(my_team, roster, fc, intel, grades, config)
+        render_start_sit_page(page)
 
     elif key == "Depth Chart":
-        rows = depth_chart_rows(roster)
-        df = pd.DataFrame([{
-            "Pos": r["position"],
-            "Player": r["name"],
-            "NFL": r["nfl_team"],
-            "Depth": _cell(r["depth_order"]),
-            "Role": r.get("depth_role") or r["position"],
-            "ADP": _cell(r["adp"]),
-            "Starter": "✓" if r["starter"] else "",
-        } for r in rows])
-        st.dataframe(df, width="stretch", hide_index=True, height=480)
+        page = build_league_depth_chart(snapshot, fc, intel, grades)
+        render_depth_chart_page(page)
 
     elif key == "Bench Ledger":
-        bench = bench_ledger(roster)
-        df = pd.DataFrame([{
-            "Player": r["name"],
-            "Pos": r["position"],
-            "ADP": _cell(r["adp"]),
-            "Grade": r["grade"],
-            "Upside": _cell(r["upside"]),
-            "Bye": _cell(r["bye_week"]),
-            "News": _cell(r.get("news")),
-        } for r in bench])
-        st.dataframe(df, width="stretch", hide_index=True, height=480)
+        players = build_bench_ledger_page(my_team, roster, fc, intel, grades)
+        render_player_list_page(
+            "Bench Ledger", "◧", "Bench depth and upside",
+            players, empty_msg="No bench players.",
+        )
 
     elif key == "Waiver Wire":
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Trending adds")
-            st.dataframe(pd.DataFrame(wire["adds"]), width="stretch", hide_index=True, height=400)
-        with c2:
-            st.subheader("Trending drops")
-            st.dataframe(pd.DataFrame(wire["drops"]), width="stretch", hide_index=True, height=400)
+        render_waiver_wire_page(wire["adds"], wire["drops"])
 
     elif key == "Replacement Radar":
-        waivers = analyst.waiver_targets()
-        if not waivers:
-            st.info("No strong waiver fits right now.")
-        else:
-            df = pd.DataFrame([{
-                "Player": w.player,
-                "Pos": w.position,
-                "ADP": _cell(w.adp),
-                "Why": w.reason[:90],
-            } for w in waivers[:20]])
-            st.dataframe(df, width="stretch", hide_index=True, height=480)
+        render_replacement_radar_page(analyst.waiver_targets())
 
     elif key == "Roster grades":
         df = pd.DataFrame([{
