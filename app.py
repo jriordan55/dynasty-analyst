@@ -505,7 +505,6 @@ if page == "dashboard":
             )
     except Exception as e:
         st.error(f"Dashboard failed: {e}")
-        st.exception(e)
 
 # ── Rankings ─────────────────────────────────────────────────────────────────
 

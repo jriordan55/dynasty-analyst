@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import html
-from datetime import datetime
+import re
+import textwrap
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.dynatyze_dashboard import DynatyzeDashboard
 from src.my_league import section_counts, build_roster_rows, injury_report, bye_week_board
@@ -184,13 +186,22 @@ def inject_dynatyze_shell() -> None:
     )
 
 
+def _normalize_html(fragment: str) -> str:
+    """Single-line HTML — indented multiline strings render as code blocks in st.markdown."""
+    text = textwrap.dedent(fragment).strip()
+    return re.sub(r">\s+<", "><", text)
+
+
 def _embed_html(body: str, css: str = "", height: int = 720) -> None:
-    """Render HTML inline — iframes often fail on mobile Streamlit apps."""
-    scope = "dz-inline-root"
-    scoped = css.replace("body {", f".{scope} {{").replace("body{", f".{scope}{{") if css else ""
-    if scoped:
-        st.markdown(f"<style>{scoped}</style>", unsafe_allow_html=True)
-    st.markdown(f'<div class="{scope}">{body}</div>', unsafe_allow_html=True)
+    """Render HTML in a scrolling iframe (safe on Streamlit Cloud and mobile)."""
+    body = _normalize_html(body)
+    style = css.strip()
+    doc = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<style>{style}</style></head><body>{body}</body></html>"
+    )
+    components.html(doc, height=height, scrolling=True)
 
 
 LINEUP_NAV = [
