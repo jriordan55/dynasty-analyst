@@ -18,7 +18,7 @@ DYNATYZE_TTL = 6 * 3600
 
 _ROW = re.compile(
     r"^\|\s*(?P<rank>\d+)\s*\|\s*\[(?P<player>[^\]]+)\]"
-    r"\([^)]+\)\s*\|\s*(?P<pos>\w+)\s*\|\s*(?P<team>\w+)\s*\|\s*(?P<value>[\d,]+)\s*\|"
+    r"\((?P<url>[^)]+)\)\s*\|\s*(?P<pos>\w+)\s*\|\s*(?P<team>[\w.]+)\s*\|\s*(?P<value>[\d,]+)\s*\|"
 )
 
 
@@ -30,6 +30,7 @@ class RankRow:
     team: str
     value: int
     source: str
+    player_url: str = ""
     fc_value: int | None = None
     fc_rank: int | None = None
     ll_rank: int | None = None
@@ -80,9 +81,26 @@ def fetch_dynatyze_rankings(kind: str = "dynasty", force: bool = False) -> tuple
                 team=hit.group("team"),
                 value=int(hit.group("value").replace(",", "")),
                 source="Dynatyze",
+                player_url=hit.group("url"),
             )
         )
     return rows, updated
+
+
+def format_dynatyze_updated(updated: str) -> tuple[str, str]:
+    """Parse markdown updated line into ISO date + display label."""
+    updated = (updated or "").strip()
+    if not updated:
+        return "", ""
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d"):
+        try:
+            from datetime import datetime
+
+            dt = datetime.strptime(updated.replace("  ", " "), fmt)
+            return dt.strftime("%Y-%m-%d"), dt.strftime("%d %b %Y")
+        except ValueError:
+            continue
+    return "", updated
 
 
 def overlay_league(rows: list[RankRow], snapshot: dict | None, config: dict | None = None) -> list[RankRow]:
@@ -120,6 +138,7 @@ def overlay_league(rows: list[RankRow], snapshot: dict | None, config: dict | No
                 team=row.team,
                 value=row.value,
                 source=row.source,
+                player_url=row.player_url,
                 fc_value=fc_v.value if fc_v else None,
                 fc_rank=fc_v.overall_rank if fc_v else None,
                 ll_rank=mi.ll_rank if mi else None,
