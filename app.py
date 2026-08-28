@@ -14,6 +14,7 @@ from src.ui_dynatyze import (
     init_navigation,
     inject_dynatyze_shell,
     render_dashboard_home,
+    render_league_hub_nav,
     render_sidebar_league,
     render_top_nav,
 )
@@ -451,12 +452,14 @@ with st.sidebar:
 
 render_top_nav(st.session_state.page)
 st.markdown(
-    f'<p style="color:#6b7280;font-size:0.68rem;margin:-0.25rem 0 0.75rem 0;">'
-    f'Build <b style="color:#10b981;">{APP_BUILD}</b> · '
-    f'Use sidebar <b>Start/Sit</b>, <b>My Team</b>, <b>Depth Chart</b> for the new Dynatyze pages</p>',
+    f'<p style="color:#6b7280;font-size:0.68rem;margin:-0.25rem 0 0.35rem 0;">'
+    f'Build <b style="color:#10b981;">{APP_BUILD}</b></p>',
     unsafe_allow_html=True,
 )
 page = st.session_state.page
+
+if page == "dashboard":
+    render_league_hub_nav(st.session_state.league_section)
 
 # ── My Leagues / Dashboard ───────────────────────────────────────────────────
 
@@ -502,6 +505,7 @@ if page == "dashboard":
             )
     except Exception as e:
         st.error(f"Dashboard failed: {e}")
+        st.exception(e)
 
 # ── Rankings ─────────────────────────────────────────────────────────────────
 

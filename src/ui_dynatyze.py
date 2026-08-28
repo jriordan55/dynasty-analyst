@@ -6,7 +6,6 @@ import html
 from datetime import datetime
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from src.dynatyze_dashboard import DynatyzeDashboard
 from src.my_league import section_counts, build_roster_rows, injury_report, bye_week_board
@@ -186,12 +185,41 @@ def inject_dynatyze_shell() -> None:
 
 
 def _embed_html(body: str, css: str = "", height: int = 720) -> None:
-    """Render HTML in an iframe — works on Streamlit Cloud (unlike st.html height kwarg)."""
-    doc = (
-        f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
-        f"<style>{css}</style></head><body>{body}</body></html>"
+    """Render HTML inline — iframes often fail on mobile Streamlit apps."""
+    scope = "dz-inline-root"
+    scoped = css.replace("body {", f".{scope} {{").replace("body{", f".{scope}{{") if css else ""
+    if scoped:
+        st.markdown(f"<style>{scoped}</style>", unsafe_allow_html=True)
+    st.markdown(f'<div class="{scope}">{body}</div>', unsafe_allow_html=True)
+
+
+LINEUP_NAV = [
+    "Dashboard",
+    "My Team",
+    "Start/Sit",
+    "Injury Report",
+    "Depth Chart",
+    "Bench Ledger",
+    "Waiver Wire",
+    "Replacement Radar",
+]
+
+
+def render_league_hub_nav(current_section: str) -> None:
+    """Main-area tabs — easier to find on phone than sidebar-only nav."""
+    if current_section not in LINEUP_NAV:
+        current_section = "Dashboard"
+    picked = st.radio(
+        "League hub",
+        LINEUP_NAV,
+        index=LINEUP_NAV.index(current_section),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="league_hub_nav",
     )
-    components.html(doc, height=height, scrolling=True)
+    if picked != current_section:
+        st.session_state.league_section = picked
+        st.rerun()
 
 
 def render_top_nav(current: str) -> None:
