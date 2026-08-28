@@ -6,6 +6,7 @@ import html
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from src.dynatyze_dashboard import DynatyzeDashboard
 from src.my_league import section_counts, build_roster_rows, injury_report, bye_week_board
