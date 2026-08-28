@@ -25,7 +25,9 @@ from src.platform import (
     what_winning_costs,
 )
 from src.ui_adp_page import render_adp_page
+from src.ui_projections_page import render_projections_page
 from src.adp_sources import adp_source_cards, build_adp_board
+from src.projections_board import build_projections_board
 from src.rankings import (
     adp_rankings,
     expert_consensus,
@@ -252,6 +254,49 @@ def render_rankings(analyst, config: dict) -> None:
         render_adp_page(board, adp_source_cards(), scoring=scoring, note=note)
         st.caption("[Dynatyze ADP reference](https://dynatyze.com/football/adp)")
 
+    elif section == "Projections Board":
+        c1, c2, c3 = st.columns([2, 2, 3])
+        with c1:
+            scoring = st.selectbox(
+                "Scoring",
+                ["Half-PPR", "PPR", "Standard"],
+                index=0,
+                label_visibility="collapsed",
+                key="proj_scoring",
+            )
+        with c2:
+            pos_filter = st.selectbox(
+                "Position",
+                ["All", "QB", "RB", "WR", "TE"],
+                label_visibility="collapsed",
+                key="proj_pos",
+            )
+        with c3:
+            search = st.text_input(
+                "Search",
+                placeholder="Player or team…",
+                label_visibility="collapsed",
+                key="proj_search",
+            )
+        min_pts = st.select_slider(
+            "Min points",
+            options=[0, 50, 100, 150, 200],
+            value=0,
+            label_visibility="collapsed",
+            key="proj_min_pts",
+        )
+        page = build_projections_board(
+            config,
+            snapshot,
+            scoring=scoring,
+            position_filter=None if pos_filter == "All" else pos_filter,
+            search=search.strip(),
+            min_points=min_pts,
+            limit=150,
+        )
+        render_projections_page(page, scoring=scoring)
+        st.caption("[Dynatyze Projections reference](https://dynatyze.com/football/projections)")
+
     else:
         _render_other_rankings_board(section, analyst, config, snapshot, fc)
 
@@ -262,20 +307,6 @@ def _render_other_rankings_board(section, analyst, config, snapshot, fc) -> None
         rows = overlay_league(rows, snapshot, config)
         st.caption(f"Dynatyze redraft board · updated {updated}")
         st.dataframe(_rankings_df(rows), width="stretch", hide_index=True, height=520)
-
-    elif section == "Projections Board":
-        rows = fc_rankings({**config, "league": snapshot.get("league") or {}}, limit=75)
-        rows = overlay_league(rows, snapshot, config)
-        st.caption("Market projection proxy — FantasyCalc value + 30d trend (free sources)")
-        df = pd.DataFrame([{
-            "Rank": r.rank,
-            "Player": r.player,
-            "Pos": r.position,
-            "FC Value": f"{r.fc_value:,}" if r.fc_value else "—",
-            "Signal": r.signal,
-            "In league": _cell(r.on_roster, "—"),
-        } for r in rows])
-        st.dataframe(df, width="stretch", hide_index=True, height=520)
 
     elif section == "Draft Big Board":
         keepers = analyst.get_keepers()
