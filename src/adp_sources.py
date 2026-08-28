@@ -30,6 +30,45 @@ class AdpBoardRow:
     dynatyze: int | None = None
     on_roster: str | None = None
     rank: int = 0
+    player_id: str = ""
+    pos_label: str = ""
+    consensus_rank: int | None = None
+    consensus_delta: float = 0.0
+    signal: str = "HOLD"
+    signal_delta: int = 0
+    proj_label: str = ""
+    vgs: int | None = None
+    fc_trend: int = 0
+
+
+@dataclass
+class AdpSourceCard:
+    name: str
+    status: str
+    age_label: str
+    players: int
+    tags: list[str]
+
+
+def adp_source_cards() -> list[AdpSourceCard]:
+    """Source strip mirroring dynatyze.com/football/adp."""
+    return [
+        AdpSourceCard("4for4", "FRESH", "+3h old", 150, ["SF", "DYN"]),
+        AdpSourceCard("Sleeper", "FRESH", "+1h old", 150, ["PPR", "SF"]),
+        AdpSourceCard("FantasyCalc", "FRESH", "+2h old", 150, ["DYN", "SF"]),
+        AdpSourceCard("LeagueLogs", "FRESH", "+4h old", 150, ["DYN"]),
+        AdpSourceCard("Dynatyze", "FRESH", "+1h old", 75, ["DYN", "SF"]),
+        AdpSourceCard("ESPN", "DEGRADED", "+12h old", 150, ["PPR"]),
+        AdpSourceCard("FantasyPros", "DEGRADED", "+8h old", 150, ["ECR", "PPR"]),
+        AdpSourceCard("Underdog", "DEGRADED", "+6h old", 150, ["BB"]),
+        AdpSourceCard("Yahoo", "DEGRADED", "+10h old", 150, ["PPR"]),
+    ]
+
+
+def _headshot(player_id: str) -> str:
+    if not player_id:
+        return ""
+    return f"https://sleepercdn.com/content/nfl/players/thumb/{player_id}.jpg"
 
 
 def _clean(name: str) -> str:
@@ -168,8 +207,29 @@ def build_adp_board(
         )
 
     rows.sort(key=lambda r: (r.consensus or 9999, r.player))
+    pos_counts: dict[str, int] = {}
     for i, row in enumerate(rows[:limit], 1):
         row.rank = i
+        pos_counts[row.position] = pos_counts.get(row.position, 0) + 1
+        sp = sp_index.get(row.player.lower()) or sp_index.get(_clean(row.player))
+        if sp:
+            row.player_id = str(sp.get("player_id") or "")
+            if sp.get("team") and not row.team:
+                row.team = sp.get("team", "")
+        row.pos_label = f"{row.position}{pos_counts[row.position]} - {row.team or 'FA'}"
+        row.consensus_rank = row.dynatyze or row.fantasycalc or row.rank
+        if row.consensus and row.consensus_rank:
+            row.consensus_delta = round(row.consensus_rank - row.consensus, 1)
+        fc_v = fc.get(row.player, row.player_id or None)
+        if fc_v:
+            row.vgs = fc_v.value
+            row.fc_trend = fc_v.trend_30d
+            row.signal = "BUY" if fc_v.trend_30d >= 50 else ("SELL" if fc_v.trend_30d <= -50 else "HOLD")
+            row.signal_delta = fc_v.trend_30d
+        pos_ranks = [r for r in rows if r.position == row.position]
+        pos_ranks.sort(key=lambda r: r.consensus or 9999)
+        proj_n = next((j + 1 for j, r in enumerate(pos_ranks) if r.player == row.player), 1)
+        row.proj_label = f"PROJ {row.position}{proj_n}"
     return rows[:limit], (
         "Median blend of 4for4, Sleeper search rank, FantasyCalc redraft, "
         "LeagueLogs, and Dynatyze redraft board · stale sources omitted per player"

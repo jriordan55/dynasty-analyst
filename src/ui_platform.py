@@ -24,6 +24,8 @@ from src.platform import (
     trade_pulse,
     what_winning_costs,
 )
+from src.ui_adp_page import render_adp_page
+from src.adp_sources import adp_source_cards, build_adp_board
 from src.rankings import (
     adp_rankings,
     expert_consensus,
@@ -182,44 +184,75 @@ def _fc_client(analyst, config: dict) -> FantasyCalcClient:
     return fc
 
 
+RANKINGS_NAV = [
+    "Dynasty Rankings",
+    "Player ADP",
+    "Current Season Rankings",
+    "Projections Board",
+    "Draft Big Board",
+    "Pick Rankings",
+    "Expert Consensus",
+    "Where We Disagree",
+]
+
+
 def render_rankings(analyst, config: dict) -> None:
     snapshot = analyst._ensure_snapshot()
+    fc = _fc_client(analyst, config)
+
+    if "rankings_section" not in st.session_state:
+        st.session_state.rankings_section = "Dynasty Rankings"
 
     c1, c2 = st.columns([4, 1])
+    with c1:
+        picked = st.radio(
+            "Rankings board",
+            RANKINGS_NAV,
+            index=RANKINGS_NAV.index(st.session_state.rankings_section)
+            if st.session_state.rankings_section in RANKINGS_NAV else 0,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="rankings_hub_nav",
+        )
+        if picked != st.session_state.rankings_section:
+            st.session_state.rankings_section = picked
+            st.rerun()
     with c2:
         if st.button("Refresh", use_container_width=True):
             _load_dynatyze_dynasty.clear()
             st.rerun()
 
-    try:
-        rows, updated = _load_dynatyze_dynasty()
-        _render_dynatyze_dynasty_page(rows, updated)
-    except Exception as exc:
-        st.error(f"Could not load Dynatyze rankings: {exc}")
+    section = st.session_state.rankings_section
 
-    with st.expander("League overlay (ADP, FantasyCalc, ownership)", expanded=False):
+    if section == "Dynasty Rankings":
         try:
-            rows, _ = _load_dynatyze_dynasty()
-            enriched = overlay_league(rows, snapshot, config)
-            st.dataframe(_rankings_df(enriched), width="stretch", hide_index=True, height=420)
+            rows, updated = _load_dynatyze_dynasty()
+            _render_dynatyze_dynasty_page(rows, updated)
         except Exception as exc:
-            st.warning(str(exc))
+            st.error(f"Could not load Dynatyze rankings: {exc}")
 
-    with st.expander("Other ranking boards", expanded=False):
-        section = st.selectbox(
-            "Board",
-            [
-                "Current Season Rankings",
-                "Player ADP",
-                "Projections Board",
-                "Draft Big Board",
-                "Pick Rankings",
-                "Expert Consensus",
-                "Where We Disagree",
-            ],
+        with st.expander("League overlay (ADP, FantasyCalc, ownership)", expanded=False):
+            try:
+                rows, _ = _load_dynatyze_dynasty()
+                enriched = overlay_league(rows, snapshot, config)
+                st.dataframe(_rankings_df(enriched), width="stretch", hide_index=True, height=420)
+            except Exception as exc:
+                st.warning(str(exc))
+
+    elif section == "Player ADP":
+        scoring = st.radio(
+            "Scoring",
+            ["Standard", "Half-PPR", "PPR"],
+            horizontal=True,
+            index=1,
             label_visibility="collapsed",
+            key="adp_scoring_lens",
         )
-        fc = _fc_client(analyst, config)
+        board, note = build_adp_board(config, snapshot, limit=150)
+        render_adp_page(board, adp_source_cards(), scoring=scoring, note=note)
+        st.caption("[Dynatyze ADP reference](https://dynatyze.com/football/adp)")
+
+    else:
         _render_other_rankings_board(section, analyst, config, snapshot, fc)
 
 
@@ -229,28 +262,6 @@ def _render_other_rankings_board(section, analyst, config, snapshot, fc) -> None
         rows = overlay_league(rows, snapshot, config)
         st.caption(f"Dynatyze redraft board · updated {updated}")
         st.dataframe(_rankings_df(rows), width="stretch", hide_index=True, height=520)
-
-    elif section == "Player ADP":
-        from src.adp_sources import build_adp_board
-
-        board, note = build_adp_board(config, snapshot, limit=150)
-        st.caption(note + " · [Dynatyze ADP reference](https://dynatyze.com/football/adp)")
-        df = pd.DataFrame([{
-            "Rank": b.rank,
-            "Player": b.player,
-            "Pos": b.position,
-            "Team": b.team,
-            "Consensus": b.consensus,
-            "4for4": _cell(b.four_for_four),
-            "Sleeper": _cell(b.sleeper),
-            "FantasyCalc": _cell(b.fantasycalc),
-            "LeagueLogs": _cell(b.leaguelogs),
-            "Dynatyze": _cell(b.dynatyze),
-            "Src": b.sources,
-            "Var": b.variance,
-            "In league": _cell(b.on_roster, "—"),
-        } for b in board])
-        st.dataframe(df, width="stretch", hide_index=True, height=520)
 
     elif section == "Projections Board":
         rows = fc_rankings({**config, "league": snapshot.get("league") or {}}, limit=75)
