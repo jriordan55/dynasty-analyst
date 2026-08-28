@@ -81,10 +81,22 @@ def fetch_dynatyze_rankings(kind: str = "dynasty", force: bool = False) -> tuple
     updated = ""
 
     try:
-        if not force and cache.exists() and time.time() - cache.stat().st_mtime < DYNATYZE_TTL:
-            text = cache.read_text(encoding="utf-8")
+        if cache.exists():
+            age = time.time() - cache.stat().st_mtime
+            if not force and age < DYNATYZE_TTL:
+                text = cache.read_text(encoding="utf-8")
+            else:
+                try:
+                    with httpx.Client(timeout=10) as client:
+                        resp = client.get(url, headers={"Accept": "text/markdown"})
+                        resp.raise_for_status()
+                        text = resp.text
+                    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    cache.write_text(text, encoding="utf-8")
+                except Exception:
+                    text = cache.read_text(encoding="utf-8") if cache.exists() else ""
         else:
-            with httpx.Client(timeout=30) as client:
+            with httpx.Client(timeout=10) as client:
                 resp = client.get(url, headers={"Accept": "text/markdown"})
                 resp.raise_for_status()
                 text = resp.text
@@ -94,7 +106,10 @@ def fetch_dynatyze_rankings(kind: str = "dynasty", force: bool = False) -> tuple
         bundled, bundled_updated = _rows_from_bundled(kind)
         if bundled:
             return bundled, bundled_updated
-        raise
+        if cache.exists():
+            text = cache.read_text(encoding="utf-8")
+        else:
+            return [], ""
 
     m = re.search(r"Updated:\s*(.+)", text)
     if m:

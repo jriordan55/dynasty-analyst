@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 import pandas as pd
@@ -133,6 +134,10 @@ def _render_dynatyze_dynasty_page(rows, updated: str) -> None:
         f"Top {len(rows)} ranked · [View on Dynatyze](https://dynatyze.com/football/nfl-rankings)"
     )
 
+    if not rows:
+        st.warning("Rankings board is empty — tap Refresh or check your connection.")
+        return
+
     board = _dynatyze_board_df(rows)
     st.dataframe(
         board.drop(columns=["Profile"]),
@@ -198,30 +203,68 @@ RANKINGS_NAV = [
 ]
 
 
+@st.cache_data(ttl=600, show_spinner="Loading ADP board…")
+def _cached_adp_board(config_json: str, league_id: str, limit: int) -> tuple[list, str]:
+    config = json.loads(config_json)
+    from src.adp_sources import build_adp_board
+    from src.sleeper import SleeperClient
+
+    snapshot = None
+    sleeper_players = None
+    if league_id:
+        try:
+            with SleeperClient(league_id) as client:
+                sleeper_players = client.get_all_players()
+        except Exception:
+            sleeper_players = None
+    return build_adp_board(config, snapshot, sleeper_players=sleeper_players, limit=limit)
+
+
+@st.cache_data(ttl=600, show_spinner="Loading projections…")
+def _cached_projections_board(
+    config_json: str,
+    league_id: str,
+    scoring: str,
+    position_filter: str | None,
+    search: str,
+    min_points: int,
+    limit: int,
+):
+    from src.analyst import DynastyAnalyst
+    from src.projections_board import build_projections_board
+
+    config = json.loads(config_json)
+    analyst = DynastyAnalyst(config)
+    try:
+        snapshot = analyst._ensure_snapshot()
+        return build_projections_board(
+            config, snapshot, scoring=scoring, position_filter=position_filter,
+            search=search, min_points=min_points, limit=limit,
+        )
+    finally:
+        analyst.news.close()
+
+
 def render_rankings(analyst, config: dict) -> None:
     snapshot = analyst._ensure_snapshot()
-    fc = _fc_client(analyst, config)
 
     if "rankings_section" not in st.session_state:
         st.session_state.rankings_section = "Dynasty Rankings"
 
     c1, c2 = st.columns([4, 1])
     with c1:
-        picked = st.radio(
+        st.radio(
             "Rankings board",
             RANKINGS_NAV,
-            index=RANKINGS_NAV.index(st.session_state.rankings_section)
-            if st.session_state.rankings_section in RANKINGS_NAV else 0,
             horizontal=True,
             label_visibility="collapsed",
-            key="rankings_hub_nav",
+            key="rankings_section",
         )
-        if picked != st.session_state.rankings_section:
-            st.session_state.rankings_section = picked
-            st.rerun()
     with c2:
         if st.button("Refresh", use_container_width=True):
             _load_dynatyze_dynasty.clear()
+            _cached_adp_board.clear()
+            _cached_projections_board.clear()
             st.rerun()
 
     section = st.session_state.rankings_section
@@ -250,7 +293,8 @@ def render_rankings(analyst, config: dict) -> None:
             label_visibility="collapsed",
             key="adp_scoring_lens",
         )
-        board, note = build_adp_board(config, snapshot, limit=150)
+        league_id = str(config.get("league_id") or "")
+        board, note = _cached_adp_board(json.dumps(config, sort_keys=True), league_id, 150)
         render_adp_page(board, adp_source_cards(), scoring=scoring, note=note)
         st.caption("[Dynatyze ADP reference](https://dynatyze.com/football/adp)")
 
@@ -285,19 +329,20 @@ def render_rankings(analyst, config: dict) -> None:
             label_visibility="collapsed",
             key="proj_min_pts",
         )
-        page = build_projections_board(
-            config,
-            snapshot,
-            scoring=scoring,
-            position_filter=None if pos_filter == "All" else pos_filter,
-            search=search.strip(),
-            min_points=min_pts,
-            limit=150,
+        page = _cached_projections_board(
+            json.dumps(config, sort_keys=True),
+            str(config.get("league_id") or ""),
+            scoring,
+            None if pos_filter == "All" else pos_filter,
+            search.strip(),
+            min_pts,
+            150,
         )
         render_projections_page(page, scoring=scoring)
         st.caption("[Dynatyze Projections reference](https://dynatyze.com/football/projections)")
 
     else:
+        fc = _fc_client(analyst, config)
         _render_other_rankings_board(section, analyst, config, snapshot, fc)
 
 

@@ -92,8 +92,11 @@ def _redraft_fc_client(config: dict) -> FantasyCalcClient:
 
 
 def _dynatyze_redraft_ranks() -> dict[str, int]:
-    rows, _ = fetch_dynatyze_rankings("redraft")
-    return {_clean(r.player): r.rank for r in rows}
+    try:
+        rows, _ = fetch_dynatyze_rankings("redraft")
+        return {_clean(r.player): r.rank for r in rows}
+    except Exception:
+        return {}
 
 
 def build_adp_board(
