@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
 import statistics
 from dataclasses import dataclass
 
 from src.adp import load_adp, lookup_adp
+from src.adp_momentum import lookup_momentum, record_adp_snapshot
 from src.fantasycalc import FantasyCalcClient
 from src.market_insights import MarketInsightsClient
 from src.rankings import fetch_dynatyze_rankings
 from src.models import Player
+from src.vegas_signals import build_vegas_index
 
 CORE = {"QB", "RB", "WR", "TE"}
 
@@ -38,7 +41,15 @@ class AdpBoardRow:
     signal_delta: int = 0
     proj_label: str = ""
     vgs: int | None = None
+    vgs_trend: float = 0.0
+    vegas_edge: float = 0.0
+    vegas_our_pts: float | None = None
+    vegas_books_pts: float | None = None
     fc_trend: int = 0
+    adp_change_7d: float = 0.0
+    adp_momentum_label: str = "STABLE"
+    adp_momentum_arrow: str = "→"
+    adp_momentum_color: str = "gray"
 
 
 @dataclass
@@ -210,6 +221,23 @@ def build_adp_board(
         )
 
     rows.sort(key=lambda r: (r.consensus or 9999, r.player))
+
+    league_key = json.dumps(
+        {"lid": config.get("league_id"), "teams": league.get("total_rosters")},
+        sort_keys=True,
+    )
+    record_adp_snapshot(
+        {r.player.lower(): r.consensus for r in rows if r.consensus},
+        league_key=league_key,
+    )
+
+    vegas_index: dict = {}
+    try:
+        vegas_rows = [(r.player, r.position, r.consensus) for r in rows if r.consensus]
+        vegas_index = build_vegas_index(fc, vegas_rows)
+    except Exception:
+        pass
+
     pos_counts: dict[str, int] = {}
     for i, row in enumerate(rows[:limit], 1):
         row.rank = i
@@ -225,10 +253,29 @@ def build_adp_board(
             row.consensus_delta = round(row.consensus_rank - row.consensus, 1)
         fc_v = fc.get(row.player, row.player_id or None)
         if fc_v:
-            row.vgs = fc_v.value
             row.fc_trend = fc_v.trend_30d
             row.signal = "BUY" if fc_v.trend_30d >= 50 else ("SELL" if fc_v.trend_30d <= -50 else "HOLD")
             row.signal_delta = fc_v.trend_30d
+
+        mom = lookup_momentum(
+            row.player,
+            row.consensus,
+            fc_trend_30d=row.fc_trend,
+        )
+        row.adp_change_7d = mom.change_7d
+        row.adp_momentum_label = mom.label
+        row.adp_momentum_arrow = mom.arrow
+        row.adp_momentum_color = mom.color
+
+        vgs = vegas_index.get(row.player.lower()) or vegas_index.get(_clean(row.player))
+        if vgs:
+            row.vgs = vgs.vgs
+            row.vgs_trend = vgs.vgs_trend
+            row.vegas_edge = vgs.edge
+            row.vegas_our_pts = vgs.our_pts
+            row.vegas_books_pts = vgs.vegas_pts
+        elif fc_v:
+            row.vgs = fc_v.value
         pos_ranks = [r for r in rows if r.position == row.position]
         pos_ranks.sort(key=lambda r: r.consensus or 9999)
         proj_n = next((j + 1 for j, r in enumerate(pos_ranks) if r.player == row.player), 1)

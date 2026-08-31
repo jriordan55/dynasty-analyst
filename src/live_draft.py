@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from src.adp_momentum import lookup_momentum, top_movers
 from src.draft import (
     adp_window_for_pick,
     build_draft_board,
@@ -14,6 +15,7 @@ from src.draft import (
 )
 from src.models import DraftBoardEntry, PickRecommendation
 from src.sleeper import SleeperClient
+from src.vegas_signals import build_vegas_index, get_vegas_signal
 
 
 @dataclass
@@ -28,6 +30,11 @@ class LivePick:
     reason: str
     tags: list[str] = field(default_factory=list)
     rank: int = 0
+    adp_change_7d: float = 0.0
+    adp_momentum_arrow: str = "→"
+    vgs: int | None = None
+    vgs_trend: float = 0.0
+    vegas_edge: float = 0.0
 
 
 @dataclass
@@ -59,6 +66,8 @@ class LiveDraftAnalysis:
     recent_picks: list[dict]
     updated_at: str
     pre_draft: bool
+    risers: list = field(default_factory=list)
+    fallers: list = field(default_factory=list)
 
 
 def fetch_sleeper_draft(league_id: str, username: str) -> dict | None:
@@ -95,6 +104,9 @@ def _pick_tags(
     target_pick: int | None,
     on_clock: bool,
     pre_draft: bool,
+    *,
+    vegas_index: dict | None = None,
+    fc_trend_by_name: dict | None = None,
 ) -> list[str]:
     tags: list[str] = []
     fit = getattr(entry, "fit_score", 0) or 0
@@ -112,7 +124,20 @@ def _pick_tags(
         tags.append("VALUE")
     if upside >= 40:
         tags.append("UPSIDE")
-    return tags[:3]
+    if vegas_index:
+        v = get_vegas_signal(vegas_index, getattr(entry, "player", "") or "")
+        if v and v.edge >= 5:
+            tags.append("VEGAS+")
+    if fc_trend_by_name:
+        name = (getattr(entry, "player", "") or "").lower()
+        mom = lookup_momentum(
+            getattr(entry, "player", "") or "",
+            float(adp) if adp else None,
+            fc_trend_30d=fc_trend_by_name.get(name, 0),
+        )
+        if mom.label == "RISER":
+            tags.append("RISER")
+    return tags[:4]
 
 
 def build_avoid_list(
@@ -122,6 +147,8 @@ def build_avoid_list(
     on_clock: bool,
     pre_draft: bool,
     limit: int = 8,
+    vegas_index: dict | None = None,
+    fc_trend_by_name: dict | None = None,
 ) -> list[AvoidPlayer]:
     """Players to skip at the current pick window."""
     avoids: list[AvoidPlayer] = []
@@ -161,6 +188,20 @@ def build_avoid_list(
         if entry.upside_score < 12 and entry.adp and target_pick and entry.adp >= target_pick:
             reasons.append(("medium", "Low upside profile at this stage"))
 
+        if fc_trend_by_name:
+            mom = lookup_momentum(
+                entry.player,
+                float(entry.adp) if entry.adp else None,
+                fc_trend_30d=fc_trend_by_name.get(entry.player.lower(), 0),
+            )
+            if mom.label == "FALLER" and on_clock:
+                reasons.append(("medium", f"7d ADP faller ({mom.arrow} {abs(mom.change_7d):.1f})"))
+
+        if vegas_index:
+            v = get_vegas_signal(vegas_index, entry.player)
+            if v and v.edge <= -8 and on_clock:
+                reasons.append(("medium", f"Vegas fade — books ~{v.vegas_pts:.0f} vs our {v.our_pts:.0f}"))
+
         if not reasons:
             continue
         sev, reason = sorted(reasons, key=lambda x: 0 if x[0] == "high" else 1)[0]
@@ -192,6 +233,8 @@ def _enrich_picks(
     recs: list[PickRecommendation],
     board: list[DraftBoardEntry],
     fc_by_name: dict,
+    fc_trend_by_name: dict,
+    vegas_index: dict,
     *,
     target_pick: int | None,
     on_clock: bool,
@@ -204,12 +247,22 @@ def _enrich_picks(
         news_flag = entry.news_flag if entry else ""
         fc = fc_by_name.get(rec.player.lower())
         fc_val = fc.value if fc else None
+        fc_trend = fc_trend_by_name.get(rec.player.lower(), 0)
+        mom = lookup_momentum(rec.player, float(rec.adp) if rec.adp else None, fc_trend_30d=fc_trend)
+        vgs_sig = get_vegas_signal(vegas_index, rec.player)
         tags = _pick_tags(
             entry or rec,
             target_pick,
             on_clock,
             pre_draft,
+            vegas_index=vegas_index,
+            fc_trend_by_name=fc_trend_by_name,
         )
+        reason = rec.reason
+        if vgs_sig and abs(vgs_sig.edge) >= 3:
+            reason = f"{reason} · Vegas {vgs_sig.edge:+.0f} pt edge" if reason else f"Vegas {vgs_sig.edge:+.0f} pt edge"
+        if mom.label != "STABLE":
+            reason = f"{reason} · 7d ADP {mom.label.lower()} ({mom.arrow}{abs(mom.change_7d):.1f})" if reason else f"7d ADP {mom.label.lower()}"
         live.append(
             LivePick(
                 player=rec.player,
@@ -219,9 +272,14 @@ def _enrich_picks(
                 upside_score=rec.upside_score,
                 fc_value=fc_val,
                 grade=_quick_grade(rec.adp, rec.upside_score, news_flag),
-                reason=rec.reason,
+                reason=reason,
                 tags=tags,
                 rank=i,
+                adp_change_7d=mom.change_7d,
+                adp_momentum_arrow=mom.arrow,
+                vgs=vgs_sig.vgs if vgs_sig else None,
+                vgs_trend=vgs_sig.vgs_trend if vgs_sig else 0.0,
+                vegas_edge=vgs_sig.edge if vgs_sig else 0.0,
             )
         )
     return live
@@ -264,9 +322,20 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
 
     fc, _ = analyst._market_clients()
     fc_by_name = {name.lower(): val for name, val in fc._by_name.items()}
+    fc_trend_by_name = {name.lower(): val.trend_30d for name, val in fc._by_name.items()}
+
+    vegas_index: dict = {}
+    try:
+        vegas_rows = [
+            (e.player, e.position, float(e.adp) if e.adp else None)
+            for e in board
+        ]
+        vegas_index = build_vegas_index(fc, vegas_rows)
+    except Exception:
+        pass
 
     picks = _enrich_picks(
-        recs, board, fc_by_name,
+        recs, board, fc_by_name, fc_trend_by_name, vegas_index,
         target_pick=target_pick,
         on_clock=is_my_pick,
         pre_draft=pre_draft,
@@ -276,7 +345,12 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
         target_pick=target_pick,
         on_clock=is_my_pick,
         pre_draft=pre_draft,
+        vegas_index=vegas_index,
+        fc_trend_by_name=fc_trend_by_name,
     )
+
+    mover_rows = [(e.player, float(e.adp) if e.adp else None, fc_trend_by_name.get(e.player.lower(), 0)) for e in board[:80]]
+    risers, fallers = top_movers(mover_rows, limit=6)
 
     plan = analyst.draft_plan(keepers)
     recent = list(reversed((draft or {}).get("picks", [])[-18:]))
@@ -298,6 +372,8 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
         target_pick=target_pick,
         draft_priorities=list(plan.draft_priorities or []),
         recent_picks=recent,
+        risers=risers,
+        fallers=fallers,
         updated_at=datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
         pre_draft=pre_draft,
     )

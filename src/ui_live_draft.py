@@ -43,7 +43,17 @@ body { margin: 0; background: transparent; color: #e5e7eb; font-family: Montserr
 .dz-pick-rank { color: #10b981; font-size: 0.72rem; font-weight: 800; }
 .dz-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.35rem; }
 .dz-tag { font-size: 0.55rem; font-weight: 800; letter-spacing: 0.06em; padding: 0.1rem 0.35rem; border-radius: 999px; background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
-.dz-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35rem; margin-bottom: 0.35rem; }
+.dz-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.35rem; margin-bottom: 0.35rem; }
+@media (max-width: 700px) { .dz-stats { grid-template-columns: repeat(3, 1fr); } }
+.dz-stat-trend { font-size: 0.48rem; font-weight: 700; margin-top: 0.05rem; }
+.dz-stat-trend.green { color: #10b981; }
+.dz-stat-trend.red { color: #f87171; }
+.dz-movers { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; margin-bottom: 0.85rem; }
+.dz-mover-panel { background: #0a0a0a; border: 1px solid #1f2937; border-radius: 0.55rem; padding: 0.55rem 0.65rem; }
+.dz-mover-line { display: flex; justify-content: space-between; font-size: 0.62rem; padding: 0.2rem 0; color: #d1d5db; }
+.dz-mover-line b { color: #fff; font-weight: 600; }
+.dz-mover-up { color: #10b981; font-weight: 800; }
+.dz-mover-down { color: #f87171; font-weight: 800; }
 .dz-stat { text-align: center; background: #111827; border-radius: 0.45rem; padding: 0.25rem 0.15rem; }
 .dz-stat-l { color: #6b7280; font-size: 0.52rem; font-weight: 700; text-transform: uppercase; }
 .dz-stat-v { color: #fff; font-size: 0.78rem; font-weight: 800; }
@@ -112,6 +122,19 @@ def _render_analysis_html(analysis) -> str:
     for p in analysis.picks:
         top = " top" if p.rank == 1 and analysis.is_my_pick else ""
         tags = "".join(f'<span class="dz-tag">{html.escape(t)}</span>' for t in p.tags)
+        ch = p.adp_change_7d
+        trend_cls = "green" if ch < 0 else ("red" if ch > 0 else "")
+        trend_txt = f"{p.adp_momentum_arrow}{abs(ch):.1f}" if ch else p.adp_momentum_arrow
+        vgs_trend = ""
+        if p.vgs_trend:
+            vgs_trend = f'<div class="dz-stat-trend green">↗{p.vgs_trend:+.0f}</div>' if p.vgs_trend > 0 else f'<div class="dz-stat-trend red">↘{p.vgs_trend:+.0f}</div>'
+        vegas_cell = (
+            f'<div class="dz-stat"><div class="dz-stat-l">VGS</div>'
+            f'<div class="dz-stat-v">{p.vgs}</div>{vgs_trend}</div>'
+            if p.vgs else
+            f'<div class="dz-stat"><div class="dz-stat-l">Vegas</div>'
+            f'<div class="dz-stat-v">{p.vegas_edge:+.0f}</div></div>'
+        )
         fc_cell = (
             f'<div class="dz-stat"><div class="dz-stat-l">FC</div>'
             f'<div class="dz-stat-v">{p.fc_value:,}</div></div>'
@@ -125,9 +148,11 @@ def _render_analysis_html(analysis) -> str:
             f'<span class="dz-pick-rank">#{p.rank}</span></div>'
             f'<div class="dz-tags">{tags}</div>'
             f'<div class="dz-stats">'
-            f'<div class="dz-stat"><div class="dz-stat-l">ADP</div><div class="dz-stat-v">{_fmt_num(p.adp)}</div></div>'
+            f'<div class="dz-stat"><div class="dz-stat-l">ADP</div><div class="dz-stat-v">{_fmt_num(p.adp)}</div>'
+            f'<div class="dz-stat-trend {trend_cls}">{html.escape(trend_txt)}</div></div>'
             f'<div class="dz-stat"><div class="dz-stat-l">Fit</div><div class="dz-stat-v">{_fmt_num(p.fit_score)}</div></div>'
             f'<div class="dz-stat"><div class="dz-stat-l">Upside</div><div class="dz-stat-v">{_fmt_num(p.upside_score)}</div></div>'
+            f'{vegas_cell}'
             f'{fc_cell}'
             f'</div>'
             f'<p class="dz-reason">{html.escape(p.reason)}</p></div>'
@@ -159,6 +184,24 @@ def _render_analysis_html(analysis) -> str:
         )
     recent_html = "".join(recent_rows) or '<div class="dz-empty">No picks yet.</div>'
 
+    def _mover_lines(items, cls_up: str) -> str:
+        if not items:
+            return '<div class="dz-mover-line"><span>—</span></div>'
+        out = ""
+        for m in items[:5]:
+            delta = f"{m.arrow} {abs(m.change_7d):.1f}"
+            out += f'<div class="dz-mover-line"><b>{html.escape(m.player)}</b><span class="{cls_up}">{html.escape(delta)}</span></div>'
+        return out
+
+    movers_html = ""
+    if analysis.risers or analysis.fallers:
+        movers_html = (
+            f'<div class="dz-movers">'
+            f'<div class="dz-mover-panel"><p class="dz-panel-title">7d ADP risers</p>{_mover_lines(analysis.risers, "dz-mover-up")}</div>'
+            f'<div class="dz-mover-panel"><p class="dz-panel-title">7d ADP fallers</p>{_mover_lines(analysis.fallers, "dz-mover-down")}</div>'
+            f'</div>'
+        )
+
     progress_pct = 0
     if analysis.total_picks:
         progress_pct = round(100 * analysis.completed_picks / analysis.total_picks)
@@ -183,6 +226,7 @@ def _render_analysis_html(analysis) -> str:
       <div class="dz-needs"><span class="dz-need" style="border-color:#10b981;color:#10b981;">Priorities</span>{needs}</div>
       <p class="dz-clock-sub" style="margin-top:0.45rem;">Your next picks: {html.escape(next_picks)}</p>
     </div>
+    {movers_html}
     <div class="dz-grid">
       <div class="dz-panel">
         <p class="dz-panel-title">{html.escape(pick_title)}</p>
@@ -216,7 +260,7 @@ def _draw_live_board(analyst, config: dict, show_fit: bool) -> None:
         st.info("No Sleeper draft found for this league yet. Start the draft on Sleeper, then refresh.")
         return
 
-    height = 920 if analysis.is_my_pick else 860
+    height = 980 if analysis.is_my_pick else 920
     _embed_html(_render_analysis_html(analysis), css=LIVE_CSS, height=height)
 
     if not show_fit:
@@ -244,7 +288,7 @@ def render_live_draft(analyst, config: dict, *, show_fit: bool = True) -> None:
         auto = st.toggle("Auto-sync (12s)", value=True, disabled=not auto_ok)
     with c3:
         st.caption(
-            "Connected to Sleeper · Rankings use ADP, FantasyCalc value, roster fit, and upside."
+            "Connected to Sleeper · ADP 7d movers, Vegas (VGS), FantasyCalc, roster fit, and upside."
             if auto_ok else
             "Connected to Sleeper · Tap Refresh during your draft (auto-sync needs Streamlit 1.37+)."
         )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 
 from src.adp_sources import AdpBoardRow, AdpSourceCard, _headshot
+from src.adp_momentum import top_movers
 from src.ui_dynatyze import _embed_html
 
 ADP_CSS = """
@@ -40,7 +41,21 @@ body { margin: 0; background: #0a0a0a; color: #e5e7eb; font-family: Montserrat, 
 .dz-consensus-delta.neg { color: #f87171; }
 .dz-conf-bar { width: 100%; max-width: 120px; height: 4px; background: #1f2937; border-radius: 999px; overflow: hidden; margin-top: 0.25rem; }
 .dz-conf-fill { height: 100%; background: #10b981; border-radius: 999px; }
+.dz-adp-badge-wrap { text-align: center; }
+.dz-adp-trend { font-size: 0.58rem; font-weight: 800; margin-bottom: 0.15rem; }
+.dz-adp-trend.green { color: #10b981; }
+.dz-adp-trend.red { color: #f87171; }
+.dz-adp-trend.gray { color: #6b7280; }
 .dz-adp-badge { width: 42px; height: 42px; border-radius: 999px; background: rgba(16,185,129,0.15); border: 2px solid #10b981; color: #10b981; font-weight: 800; font-size: 0.82rem; display: grid; place-items: center; margin: 0 auto; box-shadow: 0 0 12px rgba(16,185,129,0.25); }
+.dz-movers { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; margin-bottom: 1rem; }
+.dz-mover-col { background: #0f1115; border: 1px solid #1f2937; border-radius: 0.65rem; padding: 0.65rem; }
+.dz-mover-title { color: #6b7280; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 0.45rem 0; }
+.dz-mover-row { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.68rem; padding: 0.25rem 0; border-bottom: 1px solid #1f2937; }
+.dz-mover-name { color: #fff; font-weight: 600; }
+.dz-mover-delta { font-weight: 800; white-space: nowrap; }
+.dz-mover-delta.green { color: #10b981; }
+.dz-mover-delta.red { color: #f87171; }
+.dz-vgs-trend { font-size: 0.48rem; font-weight: 700; margin-left: 0.15rem; opacity: 0.9; }
 .dz-signals { display: flex; flex-wrap: wrap; gap: 0.25rem; justify-content: flex-end; }
 .dz-sig { font-size: 0.52rem; font-weight: 800; padding: 0.12rem 0.35rem; border-radius: 0.3rem; border: 1px solid #374151; color: #9ca3af; white-space: nowrap; }
 .dz-sig.hold { color: #9ca3af; border-color: #374151; }
@@ -84,7 +99,17 @@ def _row_html(row: AdpBoardRow) -> str:
     adp_val = f"{row.consensus:.1f}" if row.consensus else "—"
     sig_cls = row.signal.lower()
     sig_delta = row.signal_delta
-    vgs = f"VGS {row.vgs}" if row.vgs else "VGS —"
+    ch = row.adp_change_7d
+    trend_cls = row.adp_momentum_color
+    trend_txt = f"{row.adp_momentum_arrow} {abs(ch):.1f}" if ch else f"{row.adp_momentum_arrow} 0.0"
+    vgs_trend = ""
+    if row.vgs_trend:
+        arrow = "↗" if row.vgs_trend > 0 else "↘"
+        vgs_trend = f'<span class="dz-vgs-trend">{arrow} {row.vgs_trend:+.0f}</span>'
+    vgs = f"VGS {row.vgs}{vgs_trend}" if row.vgs else "VGS —"
+    edge_hint = ""
+    if row.vegas_edge and abs(row.vegas_edge) >= 3:
+        edge_hint = f' title="Books ~{row.vegas_books_pts:.0f} · We ~{row.vegas_our_pts:.0f} · {row.vegas_edge:+.1f} edge"'
     return (
         f'<div class="dz-adp-row">'
         f'<div><div class="dz-rank-num">{row.rank}</div><div class="dz-rank-ovr">OVR</div></div>'
@@ -95,11 +120,36 @@ def _row_html(row: AdpBoardRow) -> str:
         f'<span class="dz-consensus-num">{row.consensus_rank or row.rank}</span>'
         f'<span class="dz-consensus-delta {delta_cls}">{delta_txt}</span>'
         f'<div class="dz-conf-bar"><div class="dz-conf-fill" style="width:{conf_pct}%"></div></div></div>'
-        f'<div><div class="dz-adp-badge">{html.escape(adp_val)}</div></div>'
+        f'<div class="dz-adp-badge-wrap"><div class="dz-adp-trend {trend_cls}">{html.escape(trend_txt)}</div>'
+        f'<div class="dz-adp-badge">{html.escape(adp_val)}</div></div>'
         f'<div class="dz-signals dz-signals-col">'
         f'<span class="dz-sig {sig_cls}">{html.escape(row.signal)} {sig_delta:+d}</span>'
         f'<span class="dz-sig proj">{html.escape(row.proj_label)}</span>'
-        f'<span class="dz-sig vgs">{html.escape(vgs)}</span></div></div>'
+        f'<span class="dz-sig vgs"{edge_hint}>{html.escape(vgs)}</span></div></div>'
+    )
+
+
+def _movers_html(board: list[AdpBoardRow]) -> str:
+    tuples = [(r.player, r.consensus, r.fc_trend) for r in board if r.consensus]
+    risers, fallers = top_movers(tuples, limit=8)
+    if not risers and not fallers:
+        return ""
+
+    def _col(title: str, items, cls: str) -> str:
+        rows = ""
+        for m in items:
+            delta = f"{m.arrow} {abs(m.change_7d):.1f}"
+            rows += (
+                f'<div class="dz-mover-row"><span class="dz-mover-name">{html.escape(m.player)}</span>'
+                f'<span class="dz-mover-delta {cls}">{html.escape(delta)}</span></div>'
+            )
+        if not rows:
+            rows = '<div class="dz-mover-row"><span class="dz-mover-name">—</span></div>'
+        return f'<div class="dz-mover-col"><p class="dz-mover-title">{html.escape(title)}</p>{rows}</div>'
+
+    return (
+        f'<div class="dz-movers">{_col("7d ADP risers", risers, "green")}'
+        f'{_col("7d ADP fallers", fallers, "red")}</div>'
     )
 
 
@@ -110,6 +160,7 @@ def render_adp_page(
     note: str = "",
 ) -> None:
     src_html = "".join(_source_card(s) for s in sources)
+    movers_html = _movers_html(board)
     rows_html = "".join(_row_html(r) for r in board[:75])
     scoring_opts = [("Standard", "0 / rec"), ("Half-PPR", "0.5 / rec"), ("PPR", "1 / rec")]
     lens = ""
@@ -124,6 +175,7 @@ def render_adp_page(
 <p class="dz-adp-sub">Consensus average draft position · {html.escape(note[:120])}</p>
 </div>
 <div class="dz-sources">{src_html}</div>
+{movers_html}
 <div class="dz-lens">
 <span class="dz-lens-label">League lens</span>
 <div class="dz-lens-toggle">{lens}</div>
