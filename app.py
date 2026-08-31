@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -45,28 +46,49 @@ def save_config(config: dict) -> None:
 
 def get_config() -> dict:
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    base = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
-    try:
-        for key in ("league_id", "username", "league_name", "fantasypros_api_key"):
-            if key in st.secrets:
-                base[key] = st.secrets[key]
-    except Exception:
-        pass
-    return base
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    else:
+        cfg = json.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
+        try:
+            for key in ("league_id", "username", "league_name", "fantasypros_api_key"):
+                if key in st.secrets:
+                    cfg[key] = st.secrets[key]
+        except Exception:
+            pass
+    if cfg.get("league_id"):
+        cfg["league_id"] = _normalize_league_id(str(cfg["league_id"]))
+    return cfg
+
+
+def _normalize_league_id(raw: str) -> str:
+    """Sleeper league IDs are numeric strings — strip spaces and accidental characters."""
+    return re.sub(r"\D", "", (raw or "").strip())
 
 
 def _needs_league_setup(config: dict) -> bool:
-    league_id = config.get("league_id") or ""
-    username = config.get("username") or ""
-    return not league_id or league_id == "YOUR_LEAGUE_ID" or not username or username == "YOUR_SLEEPER_USERNAME"
+    league_id = _normalize_league_id(config.get("league_id") or "")
+    username = (config.get("username") or "").strip()
+    return (
+        not league_id
+        or league_id == "YOUR_LEAGUE_ID"
+        or not username
+        or username == "YOUR_SLEEPER_USERNAME"
+    )
 
 
 def _run_save_and_sync(config: dict, league_id: str, username: str, league_name: str) -> None:
+    league_id = _normalize_league_id(league_id)
+    username = (username or "").strip()
     if not league_id or not username:
         st.error("Enter league ID and username.")
         return
-    updated = {**config, "league_id": league_id.strip(), "username": username.strip()}
+    if len(league_id) < 15:
+        st.error(
+            f"League ID looks too short ({len(league_id)} digits). "
+            "Copy the **full** number from your Sleeper league URL — it is usually 18–19 digits."
+        )
+        return
+    updated = {**config, "league_id": league_id, "username": username}
     if league_name:
         updated["league_name"] = league_name.strip()
     save_config(updated)
@@ -410,7 +432,7 @@ if _needs_league_setup(config):
             "Sleeper League ID",
             value="" if config.get("league_id") == "YOUR_LEAGUE_ID" else config.get("league_id", ""),
             placeholder="1363674260144418816",
-            help="From your league URL: sleeper.app/leagues/1234567890",
+            help="Copy the full ID from sleeper.app/leagues/1363674260144418816 — all digits, usually 18–19 characters.",
             key="setup_league_id",
         )
     with c2:
@@ -445,8 +467,27 @@ try:
     if not analyst.draft_state():
         analyst.refresh_draft()
 except Exception as e:
-    st.error(f"Could not load league: {e}")
-    st.info("Open **League settings** and click **Save & Sync**.")
+    err = str(e)
+    lid = config.get("league_id", "")
+    if "404" in err and "sleeper" in err.lower():
+        st.error(
+            f"**League not found on Sleeper.** The app tried ID `{lid}` ({len(str(lid))} digits). "
+            "Your ID is probably missing a digit — open your league on Sleeper and copy the **entire** number from the URL."
+        )
+        st.markdown(
+            "Example: `https://sleeper.app/leagues/`**`1363674260144418816`** "
+            "→ league ID is **`1363674260144418816`** (19 digits, ends in **6**)."
+        )
+    else:
+        st.error(f"Could not load league: {e}")
+    st.markdown("### Fix league connection")
+    c1, c2 = st.columns(2)
+    with c1:
+        fix_id = st.text_input("Sleeper League ID", value=lid, key="fix_league_id")
+    with c2:
+        fix_user = st.text_input("Username", value=config.get("username", ""), key="fix_username")
+    if st.button("Save & Sync", type="primary", key="fix_save_sync"):
+        _run_save_and_sync(config, fix_id, fix_user, config.get("league_name", ""))
     st.stop()
 
 overview = analyst.league_overview()
