@@ -311,7 +311,13 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
 
     on_clock = (draft or {}).get("on_clock") or {}
     my_user_id = snapshot.get("my_user_id") or (draft or {}).get("my_user_id")
-    is_my_pick = bool(on_clock and on_clock.get("user_id") == my_user_id)
+    is_my_pick = bool(
+        on_clock
+        and (
+            on_clock.get("is_mine")
+            or (my_user_id and str(on_clock.get("user_id")) == str(my_user_id))
+        )
+    )
 
     recs, next_picks, target_pick = recommend_for_my_slot(
         board,

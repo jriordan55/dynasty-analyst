@@ -178,9 +178,52 @@ class SleeperClient:
             )
         return None
 
+    def get_user_drafts(self, user_id: str, season: str | None = None, sport: str | None = None) -> list[dict]:
+        """User's drafts for a season — includes in-progress mocks not always on league list."""
+        if not user_id:
+            return []
+        league = self.get_league()
+        season = season or league.get("season") or "2026"
+        sport = sport or league.get("sport") or "nfl"
+        try:
+            data = self._get(f"/user/{user_id}/drafts/{sport}/{season}")
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    def _collect_draft_candidates(self, my_user_id: str | None) -> list[dict]:
+        """Merge league + user draft feeds; user endpoint is often fresher for mocks."""
+        by_id: dict[str, dict] = {}
+        for d in self.get_drafts() or []:
+            did = d.get("draft_id")
+            if did:
+                by_id[did] = d
+
+        if my_user_id:
+            for d in self.get_user_drafts(my_user_id):
+                if str(d.get("league_id") or "") != str(self.league_id):
+                    continue
+                did = d.get("draft_id")
+                if not did:
+                    continue
+                if did in by_id:
+                    by_id[did] = merge_draft_records(by_id[did], d)
+                else:
+                    by_id[did] = d
+
+        league = self.get_league()
+        league_draft_id = league.get("draft_id")
+        if league_draft_id and league_draft_id not in by_id:
+            try:
+                by_id[league_draft_id] = self.get_draft(league_draft_id)
+            except Exception:
+                pass
+
+        return list(by_id.values())
+
     def get_draft_state(self, my_user_id: str | None = None) -> dict | None:
         """Active league draft (prefers in-progress mock or live draft)."""
-        drafts = self.get_drafts()
+        drafts = self._collect_draft_candidates(my_user_id)
         if not drafts:
             return None
 
@@ -197,8 +240,9 @@ class SleeperClient:
         roster_to_owner = {r["roster_id"]: r.get("owner_id") for r in rosters}
 
         slot_by_user: dict[str, int] = {}
-        for uid, slot in (draft.get("draft_order") or draft_meta.get("draft_order") or {}).items():
-            slot_by_user[uid] = int(slot)
+        draft_order = draft.get("draft_order") or draft_meta.get("draft_order") or {}
+        for uid, slot in draft_order.items():
+            slot_by_user[str(uid)] = int(slot)
 
         enriched_picks = []
         for pick in picks:
@@ -218,13 +262,15 @@ class SleeperClient:
         total_picks = total_rosters * rounds
         completed = len({p["pick_no"] for p in picks if p.get("pick_no") and p.get("player_id")})
 
-        status = draft.get("status") or draft_meta.get("status")
-        my_slot = slot_by_user.get(my_user_id or "", None)
+        status = (draft.get("status") or draft_meta.get("status") or "pre_draft").lower()
+        my_slot = slot_by_user.get(str(my_user_id or "")) or slot_by_user.get(my_user_id or "", None)
         on_clock = _pick_on_clock(
             enriched_picks, slot_by_user, user_map, total_rosters,
             draft_status=status,
             rounds=rounds,
         )
+        if on_clock and my_user_id:
+            on_clock["is_mine"] = str(on_clock.get("user_id")) == str(my_user_id)
 
         label, is_mock = draft_display_info(draft_meta, draft)
 
@@ -254,6 +300,7 @@ class SleeperClient:
                 }
                 for d in drafts
             ],
+            "sync_source": "user+league" if my_user_id else "league",
         }
 
     def get_league_snapshot(self, my_user_id: str | None = None) -> dict:
@@ -337,6 +384,15 @@ class SleeperClient:
         self.close()
 
 
+def merge_draft_records(a: dict, b: dict) -> dict:
+    """Combine draft list entries — prefer the more active status."""
+    status_rank = {"drafting": 0, "paused": 1, "pre_draft": 2, "complete": 3}
+    sa = status_rank.get((a.get("status") or "pre_draft").lower(), 9)
+    sb = status_rank.get((b.get("status") or "pre_draft").lower(), 9)
+    primary, secondary = (a, b) if sa <= sb else (b, a)
+    return {**secondary, **primary, "status": primary.get("status") or secondary.get("status")}
+
+
 def select_active_draft(drafts: list[dict]) -> dict | None:
     """Pick the draft board to sync — active mock/live first, then upcoming league draft."""
     if not drafts:
@@ -358,9 +414,10 @@ def draft_display_info(draft_meta: dict, draft_full: dict | None = None) -> tupl
     meta = (draft_full or {}).get("metadata") or draft_meta.get("metadata") or {}
     name = (meta.get("name") or "").lower()
     desc = (meta.get("description") or "").lower()
-    is_mock = "mock" in name or "mock" in desc
+    meta_type = (meta.get("type") or "").lower()
+    is_mock = "mock" in name or "mock" in desc or meta_type == "mock"
 
-    status = (draft_full or draft_meta).get("status") or "pre_draft"
+    status = ((draft_full or draft_meta).get("status") or "pre_draft").lower()
     if status == "drafting":
         return ("Mock draft" if is_mock else "Live draft"), is_mock
     if status == "complete":
@@ -399,7 +456,7 @@ def _pick_on_clock(
 
     user_id = next((uid for uid, s in slot_by_user.items() if s == slot), None)
     if not user_id:
-        return {"pick_no": pick_no, "round": round_no, "slot": slot}
+        return {"pick_no": pick_no, "round": round_no, "slot": slot, "is_mine": False}
 
     owner = user_map.get(user_id, {})
     return {
