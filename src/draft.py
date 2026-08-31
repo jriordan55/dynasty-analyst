@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from src.adp import lookup_adp
 from src.analysis import CORE_POSITIONS, analyze_team_needs
 from src.player_intel import positional_scarcity
@@ -14,18 +16,77 @@ from src.models import (
 )
 
 
+def has_live_picks(draft: dict | None) -> bool:
+    """Non-keeper picks on the board — Sleeper mocks write these while status stays pre_draft."""
+    if not draft:
+        return False
+    return any(
+        p.get("player_id") and not p.get("is_keeper")
+        for p in draft.get("picks", [])
+    )
+
+
+def draft_last_picked_age_minutes(draft: dict | None) -> float | None:
+    """Minutes since Sleeper last_picked timestamp, if present."""
+    if not draft:
+        return None
+    ts = draft.get("last_picked")
+    if not ts:
+        return None
+    return (time.time() * 1000 - float(ts)) / 60_000
+
+
+def is_draft_active(draft: dict | None) -> bool:
+    """True when the board has live pick activity (mock or real)."""
+    if not draft:
+        return False
+    status = (draft.get("status") or "pre_draft").lower()
+    if status in ("drafting", "paused"):
+        return True
+    if status in ("complete", "complete_mock"):
+        return False
+    return has_live_picks(draft)
+
+
+def should_poll_draft(draft: dict | None, window_minutes: float = 90) -> bool:
+    """Whether to auto-refresh — active draft or recent pick activity."""
+    if not draft:
+        return False
+    status = (draft.get("status") or "").lower()
+    if status == "drafting":
+        return True
+    if not is_draft_active(draft):
+        return False
+    age = draft_last_picked_age_minutes(draft)
+    if age is not None and age <= window_minutes:
+        return True
+    return has_live_picks(draft)
+
+
+def effective_draft_status(draft: dict | None) -> str:
+    """Sleeper API status, upgraded when mocks are clearly in progress."""
+    if not draft:
+        return "pre_draft"
+    raw = (draft.get("status") or "pre_draft").lower()
+    if raw in ("drafting", "paused", "complete", "complete_mock"):
+        return raw
+    if is_draft_active(draft):
+        return "drafting"
+    return raw
+
+
 def is_pre_draft(draft: dict | None) -> bool:
     """True before live picks start — keeper assignments may already exist."""
     if not draft:
         return True
-    return (draft.get("status") or "pre_draft").lower() in ("", "pre_draft")
+    return not is_draft_active(draft) and effective_draft_status(draft) in ("", "pre_draft")
 
 
 def is_draft_live(draft: dict | None) -> bool:
     """True while picks are being made on Sleeper (mock or real)."""
     if not draft:
         return False
-    return (draft.get("status") or "").lower() == "drafting"
+    return effective_draft_status(draft) == "drafting"
 
 
 def pick_no_for_slot_round(slot: int, round_no: int, teams: int) -> int:
@@ -74,14 +135,35 @@ def filled_pick_numbers(draft: dict | None) -> set[int]:
     }
 
 
+def latest_live_pick_no(draft: dict | None) -> int | None:
+    """Highest non-keeper pick — mocks skip keeper holes on the board."""
+    if not draft:
+        return None
+    live = [
+        p["pick_no"]
+        for p in draft.get("picks", [])
+        if p.get("pick_no") and p.get("player_id") and not p.get("is_keeper")
+    ]
+    return max(live) if live else None
+
+
 def current_draft_pick(draft: dict | None, teams: int = 12) -> int:
-    """Next pick number on the board (first unfilled slot)."""
+    """Next pick number on the board."""
     if not draft:
         return 1
     teams = draft_teams(draft, teams)
     rounds = draft.get("rounds") or 16
     total = teams * rounds
     filled = filled_pick_numbers(draft)
+
+    if is_draft_active(draft):
+        last_live = latest_live_pick_no(draft)
+        start = (last_live + 1) if last_live is not None else 1
+        for pick_no in range(start, total + 1):
+            if pick_no not in filled:
+                return pick_no
+        return min(start, total + 1)
+
     for pick_no in range(1, total + 1):
         if pick_no not in filled:
             return pick_no

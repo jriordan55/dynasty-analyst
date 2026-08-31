@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import streamlit as st
 
-from src.draft import is_draft_live, is_pre_draft
+from src.draft import is_draft_live, is_pre_draft, should_poll_draft
 from src.live_draft import LiveDraftAnalysis, analyze_live_draft, fetch_sleeper_draft, next_pick_label
 from src.ui_dynatyze import _embed_html
 
@@ -334,18 +334,29 @@ def render_live_draft(analyst, config: dict, *, show_fit: bool = True) -> None:
             "Keep this open while drafting in Sleeper — syncs mock & league drafts every 5s when live."
         )
 
-    def _run_board() -> LiveDraftAnalysis | None:
-        return _draw_live_board(analyst, config, show_fit)
-
     if auto:
         try:
-            @st.fragment(run_every=timedelta(seconds=5))
-            def _poll():
-                _run_board()
+            from streamlit_autorefresh import st_autorefresh
 
-            _poll()
-            return
-        except TypeError:
-            pass
+            st_autorefresh(interval=5000, limit=None, key="live_draft_autorefresh")
+        except ImportError:
+            try:
+                @st.fragment(run_every=timedelta(seconds=5))
+                def _poll_fragment():
+                    _draw_live_board(analyst, config, show_fit)
 
-    _run_board()
+                _poll_fragment()
+                return
+            except TypeError:
+                pass
+
+    analysis = _draw_live_board(analyst, config, show_fit)
+    if analysis and analysis.draft and auto:
+        poll = should_poll_draft(analysis.draft)
+        lp = analysis.draft.get("last_picked")
+        api = analysis.draft.get("api_status") or analysis.draft.get("status")
+        st.caption(
+            f"Sync · effective **{analysis.status}** · API `{api}` · "
+            f"{analysis.completed_picks} picks · poll={'on' if poll else 'off'}"
+            + (f" · last Sleeper pick `{lp}`" if lp else "")
+        )

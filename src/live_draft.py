@@ -9,6 +9,7 @@ from src.adp_momentum import lookup_momentum, top_movers
 from src.draft import (
     adp_window_for_pick,
     build_draft_board,
+    effective_draft_status,
     format_pick_label,
     is_pre_draft,
     recommend_for_my_slot,
@@ -366,7 +367,7 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
 
     return LiveDraftAnalysis(
         draft=draft,
-        status=(draft or {}).get("status") or "unknown",
+        status=effective_draft_status(draft) if draft else "unknown",
         is_my_pick=is_my_pick,
         on_clock_manager=on_clock.get("manager") or "—",
         on_clock_pick=on_clock.get("pick_no"),

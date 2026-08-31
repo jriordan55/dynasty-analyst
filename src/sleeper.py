@@ -236,6 +236,7 @@ class SleeperClient:
         picks = self.get_draft_picks(draft_id)
         users = self.get_users()
         rosters = self.get_rosters()
+        players = self.get_all_players()
         user_map = {u["user_id"]: u for u in users}
         roster_to_owner = {r["roster_id"]: r.get("owner_id") for r in rosters}
 
@@ -248,13 +249,20 @@ class SleeperClient:
         for pick in picks:
             meta = pick.get("metadata") or {}
             name = meta.get("full_name") or f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
+            if not name and pick.get("player_id"):
+                player_row = players.get(str(pick["player_id"]), {})
+                name = player_row.get("full_name") or (
+                    f"{player_row.get('first_name', '')} {player_row.get('last_name', '')}".strip()
+                )
             owner_id = pick.get("picked_by") or roster_to_owner.get(pick.get("roster_id"))
             owner = user_map.get(owner_id or "", {})
             enriched_picks.append({
                 **pick,
                 "player_name": name,
                 "manager": owner.get("display_name") or owner.get("username", "Unknown"),
-                "position": meta.get("position", ""),
+                "position": meta.get("position") or (
+                    players.get(str(pick.get("player_id") or ""), {}).get("position", "")
+                ),
             })
 
         total_rosters = draft.get("settings", {}).get("teams") or len(slot_by_user) or 12
@@ -263,10 +271,20 @@ class SleeperClient:
         completed = len({p["pick_no"] for p in picks if p.get("pick_no") and p.get("player_id")})
 
         status = (draft.get("status") or draft_meta.get("status") or "pre_draft").lower()
+        draft_stub = {
+            "status": status,
+            "last_picked": draft.get("last_picked") or draft_meta.get("last_picked"),
+            "teams": total_rosters,
+            "rounds": rounds,
+            "picks": enriched_picks,
+        }
+        from src.draft import effective_draft_status, is_draft_active
+
+        effective_status = effective_draft_status(draft_stub)
         my_slot = slot_by_user.get(str(my_user_id or "")) or slot_by_user.get(my_user_id or "", None)
         on_clock = _pick_on_clock(
             enriched_picks, slot_by_user, user_map, total_rosters,
-            draft_status=status,
+            draft_status=effective_status,
             rounds=rounds,
         )
         if on_clock and my_user_id:
@@ -276,7 +294,10 @@ class SleeperClient:
 
         return {
             "draft_id": draft_id,
-            "status": status,
+            "status": effective_status,
+            "api_status": status,
+            "last_picked": draft.get("last_picked") or draft_meta.get("last_picked"),
+            "is_active": is_draft_active(draft_stub),
             "type": draft.get("type") or draft_meta.get("type"),
             "draft_order": slot_by_user,
             "slot_to_roster_id": draft.get("slot_to_roster_id") or {},
@@ -400,11 +421,20 @@ def select_active_draft(drafts: list[dict]) -> dict | None:
 
     status_rank = {"drafting": 0, "paused": 1, "pre_draft": 2, "complete": 3}
 
+    def activity_score(d: dict) -> int:
+        lp = d.get("last_picked") or 0
+        age_min = (time.time() * 1000 - lp) / 60_000 if lp else 999_999
+        if age_min <= 90:
+            return 3
+        if lp:
+            return 1
+        return 0
+
     def sort_key(d: dict) -> tuple:
         status = (d.get("status") or "pre_draft").lower()
         rank = status_rank.get(status, 9)
         ts = d.get("start_time") or d.get("last_picked") or d.get("created") or 0
-        return (rank, -int(ts))
+        return (rank, -activity_score(d), -int(ts))
 
     return sorted(drafts, key=sort_key)[0]
 
