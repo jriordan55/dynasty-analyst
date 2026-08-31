@@ -1,0 +1,259 @@
+"""Live draft UI — real-time Sleeper sync with pick / avoid guidance."""
+
+from __future__ import annotations
+
+import html
+from datetime import timedelta
+
+import streamlit as st
+
+from src.live_draft import analyze_live_draft, fetch_sleeper_draft, next_pick_label
+from src.ui_dynatyze import _embed_html
+
+LIVE_CSS = """
+body { margin: 0; background: transparent; color: #e5e7eb; font-family: Montserrat, system-ui, sans-serif; }
+.dz-live-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.85rem; }
+.dz-live-title { margin: 0; color: #fff; font-size: 1.35rem; font-weight: 800; }
+.dz-live-sub { color: #6b7280; font-size: 0.75rem; margin: 0.2rem 0 0 0; }
+.dz-live-pulse { display: inline-flex; align-items: center; gap: 0.35rem; background: rgba(16,185,129,0.12); border: 1px solid rgba(16,185,129,0.35); color: #10b981; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.08em; padding: 0.2rem 0.55rem; border-radius: 999px; text-transform: uppercase; }
+.dz-live-pulse.off { background: #111827; border-color: #374151; color: #9ca3af; }
+.dz-dot { width: 7px; height: 7px; border-radius: 999px; background: #10b981; animation: pulse 1.4s infinite; }
+.dz-live-pulse.off .dz-dot { background: #6b7280; animation: none; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.dz-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.65rem; margin-bottom: 0.85rem; }
+@media (max-width: 800px) { .dz-metrics { grid-template-columns: repeat(2, 1fr); } }
+.dz-metric { background: #0f1115; border: 1px solid #1f2937; border-radius: 0.65rem; padding: 0.65rem 0.75rem; }
+.dz-metric-label { color: #6b7280; font-size: 0.58rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 0.2rem 0; }
+.dz-metric-val { color: #fff; font-size: 1rem; font-weight: 800; margin: 0; line-height: 1.2; }
+.dz-metric-val.green { color: #10b981; }
+.dz-metric-val.amber { color: #f59e0b; }
+.dz-clock { border-radius: 0.75rem; padding: 0.85rem 1rem; margin-bottom: 0.85rem; border: 1px solid #374151; background: #0f1115; }
+.dz-clock.on { border-color: rgba(16,185,129,0.55); background: rgba(16,185,129,0.08); }
+.dz-clock.wait { border-color: #374151; }
+.dz-clock-title { margin: 0; font-size: 0.95rem; font-weight: 800; color: #fff; }
+.dz-clock-sub { margin: 0.25rem 0 0 0; color: #9ca3af; font-size: 0.75rem; }
+.dz-grid { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 0.85rem; }
+@media (max-width: 900px) { .dz-grid { grid-template-columns: 1fr; } }
+.dz-panel { background: #0f1115; border: 1px solid #1f2937; border-radius: 0.75rem; padding: 0.85rem; }
+.dz-panel-title { color: #6b7280; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; margin: 0 0 0.65rem 0; }
+.dz-pick { border: 1px solid #1f2937; border-radius: 0.65rem; padding: 0.65rem 0.75rem; margin-bottom: 0.55rem; background: #0a0a0a; }
+.dz-pick.top { border-color: rgba(16,185,129,0.55); box-shadow: 0 0 0 1px rgba(16,185,129,0.15); }
+.dz-pick-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.35rem; }
+.dz-pick-name { color: #fff; font-weight: 800; font-size: 0.88rem; margin: 0; }
+.dz-pick-rank { color: #10b981; font-size: 0.72rem; font-weight: 800; }
+.dz-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-bottom: 0.35rem; }
+.dz-tag { font-size: 0.55rem; font-weight: 800; letter-spacing: 0.06em; padding: 0.1rem 0.35rem; border-radius: 999px; background: rgba(16,185,129,0.15); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+.dz-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.35rem; margin-bottom: 0.35rem; }
+.dz-stat { text-align: center; background: #111827; border-radius: 0.45rem; padding: 0.25rem 0.15rem; }
+.dz-stat-l { color: #6b7280; font-size: 0.52rem; font-weight: 700; text-transform: uppercase; }
+.dz-stat-v { color: #fff; font-size: 0.78rem; font-weight: 800; }
+.dz-reason { color: #9ca3af; font-size: 0.68rem; line-height: 1.4; margin: 0; }
+.dz-avoid { border-left: 3px solid #ef4444; padding: 0.45rem 0.55rem; margin-bottom: 0.45rem; background: rgba(127,29,29,0.1); border-radius: 0 0.45rem 0.45rem 0; }
+.dz-avoid.med { border-left-color: #f59e0b; background: rgba(120,53,15,0.12); }
+.dz-avoid-name { color: #fff; font-weight: 700; font-size: 0.78rem; margin: 0; }
+.dz-avoid-reason { color: #fca5a5; font-size: 0.65rem; margin: 0.15rem 0 0 0; line-height: 1.35; }
+.dz-avoid.med .dz-avoid-reason { color: #fcd34d; }
+.dz-needs { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.35rem; }
+.dz-need { background: #111827; border: 1px solid #374151; color: #d1d5db; font-size: 0.62rem; font-weight: 700; padding: 0.15rem 0.45rem; border-radius: 999px; }
+.dz-recent { max-height: 220px; overflow-y: auto; }
+.dz-recent-row { display: grid; grid-template-columns: 2.5rem 1fr auto; gap: 0.45rem; padding: 0.35rem 0; border-bottom: 1px solid #1f2937; font-size: 0.68rem; }
+.dz-recent-pick { color: #6b7280; font-weight: 700; }
+.dz-recent-player { color: #fff; font-weight: 600; }
+.dz-recent-mgr { color: #6b7280; text-align: right; white-space: nowrap; }
+.dz-pos { display: inline-block; font-size: 0.58rem; font-weight: 800; padding: 0.05rem 0.3rem; border-radius: 0.25rem; margin-right: 0.25rem; }
+.dz-pos-QB { background: #1e3a8a; color: #93c5fd; }
+.dz-pos-RB { background: #14532d; color: #86efac; }
+.dz-pos-WR { background: #581c87; color: #d8b4fe; }
+.dz-pos-TE { background: #78350f; color: #fcd34d; }
+.dz-empty { color: #6b7280; font-size: 0.75rem; text-align: center; padding: 1.25rem 0.5rem; }
+"""
+
+POS_CLASS = {"QB": "QB", "RB": "RB", "WR": "WR", "TE": "TE"}
+
+
+def _pos_span(pos: str) -> str:
+    cls = POS_CLASS.get(pos, "WR")
+    return f'<span class="dz-pos dz-pos-{cls}">{html.escape(pos)}</span>'
+
+
+def _fmt_num(val) -> str:
+    if val is None:
+        return "—"
+    if isinstance(val, float):
+        return f"{val:.0f}"
+    return str(val)
+
+
+def _render_analysis_html(analysis) -> str:
+    status = (analysis.status or "unknown").replace("_", " ").title()
+    drafting = analysis.status == "drafting"
+    pulse = (
+        '<span class="dz-live-pulse"><span class="dz-dot"></span> Live</span>'
+        if drafting else
+        f'<span class="dz-live-pulse off">{html.escape(status)}</span>'
+    )
+
+    if analysis.is_my_pick:
+        clock_cls = "dz-clock on"
+        clock_title = "You're on the clock — pick now"
+        clock_sub = f"Pick {analysis.on_clock_pick} · Round {analysis.on_clock_round}"
+    elif analysis.on_clock_pick:
+        clock_cls = "dz-clock wait"
+        clock_title = f"On clock: {html.escape(analysis.on_clock_manager)}"
+        clock_sub = f"Pick {analysis.on_clock_pick} · Queue for {html.escape(next_pick_label(analysis))}"
+    else:
+        clock_cls = "dz-clock wait"
+        clock_title = "Waiting for draft to start" if analysis.pre_draft else "Draft board syncing"
+        clock_sub = next_pick_label(analysis)
+
+    pick_title = "Pick now" if analysis.is_my_pick else f"Queue · {next_pick_label(analysis)}"
+
+    pick_blocks = []
+    for p in analysis.picks:
+        top = " top" if p.rank == 1 and analysis.is_my_pick else ""
+        tags = "".join(f'<span class="dz-tag">{html.escape(t)}</span>' for t in p.tags)
+        fc_cell = (
+            f'<div class="dz-stat"><div class="dz-stat-l">FC</div>'
+            f'<div class="dz-stat-v">{p.fc_value:,}</div></div>'
+            if p.fc_value else
+            f'<div class="dz-stat"><div class="dz-stat-l">Grade</div>'
+            f'<div class="dz-stat-v">{html.escape(p.grade)}</div></div>'
+        )
+        pick_blocks.append(
+            f'<div class="dz-pick{top}">'
+            f'<div class="dz-pick-head"><p class="dz-pick-name">{_pos_span(p.position)}{html.escape(p.player)}</p>'
+            f'<span class="dz-pick-rank">#{p.rank}</span></div>'
+            f'<div class="dz-tags">{tags}</div>'
+            f'<div class="dz-stats">'
+            f'<div class="dz-stat"><div class="dz-stat-l">ADP</div><div class="dz-stat-v">{_fmt_num(p.adp)}</div></div>'
+            f'<div class="dz-stat"><div class="dz-stat-l">Fit</div><div class="dz-stat-v">{_fmt_num(p.fit_score)}</div></div>'
+            f'<div class="dz-stat"><div class="dz-stat-l">Upside</div><div class="dz-stat-v">{_fmt_num(p.upside_score)}</div></div>'
+            f'{fc_cell}'
+            f'</div>'
+            f'<p class="dz-reason">{html.escape(p.reason)}</p></div>'
+        )
+    if not pick_blocks:
+        pick_blocks.append('<div class="dz-empty">No recommendations — refresh or sync league data.</div>')
+
+    avoid_blocks = []
+    for a in analysis.avoids:
+        cls = "dz-avoid" if a.severity == "high" else "dz-avoid med"
+        avoid_blocks.append(
+            f'<div class="{cls}"><p class="dz-avoid-name">{_pos_span(a.position)}{html.escape(a.player)}'
+            f' <span style="color:#6b7280;font-weight:500;">ADP {_fmt_num(a.adp)}</span></p>'
+            f'<p class="dz-avoid-reason">{html.escape(a.reason)}</p></div>'
+        )
+    if not avoid_blocks:
+        avoid_blocks.append('<div class="dz-empty">No major red flags in your pick window.</div>')
+
+    needs = "".join(f'<span class="dz-need">{html.escape(p)}</span>' for p in analysis.draft_priorities[:5])
+    next_picks = " · ".join(str(p) for p in analysis.next_picks[:4]) or "—"
+
+    recent_rows = []
+    for rp in analysis.recent_picks:
+        recent_rows.append(
+            f'<div class="dz-recent-row">'
+            f'<span class="dz-recent-pick">{rp.get("pick_no", "—")}</span>'
+            f'<span class="dz-recent-player">{_pos_span(rp.get("position") or "")}{html.escape(rp.get("player_name") or "—")}</span>'
+            f'<span class="dz-recent-mgr">{html.escape(rp.get("manager") or "")}</span></div>'
+        )
+    recent_html = "".join(recent_rows) or '<div class="dz-empty">No picks yet.</div>'
+
+    progress_pct = 0
+    if analysis.total_picks:
+        progress_pct = round(100 * analysis.completed_picks / analysis.total_picks)
+
+    return f"""
+    <div class="dz-live-head">
+      <div>
+        <h2 class="dz-live-title">Live Draft Assistant</h2>
+        <p class="dz-live-sub">Sleeper sync · Updated {html.escape(analysis.updated_at)}</p>
+      </div>
+      {pulse}
+    </div>
+    <div class="dz-metrics">
+      <div class="dz-metric"><p class="dz-metric-label">Status</p><p class="dz-metric-val">{html.escape(status)}</p></div>
+      <div class="dz-metric"><p class="dz-metric-label">Progress</p><p class="dz-metric-val">{analysis.completed_picks}/{analysis.total_picks}</p></div>
+      <div class="dz-metric"><p class="dz-metric-label">Your slot</p><p class="dz-metric-val">{_fmt_num(analysis.my_slot)}</p></div>
+      <div class="dz-metric"><p class="dz-metric-label">Board</p><p class="dz-metric-val">{progress_pct}%</p></div>
+    </div>
+    <div class="{clock_cls}">
+      <p class="dz-clock-title">{clock_title}</p>
+      <p class="dz-clock-sub">{clock_sub}</p>
+      <div class="dz-needs"><span class="dz-need" style="border-color:#10b981;color:#10b981;">Priorities</span>{needs}</div>
+      <p class="dz-clock-sub" style="margin-top:0.45rem;">Your next picks: {html.escape(next_picks)}</p>
+    </div>
+    <div class="dz-grid">
+      <div class="dz-panel">
+        <p class="dz-panel-title">{html.escape(pick_title)}</p>
+        {"".join(pick_blocks)}
+      </div>
+      <div>
+        <div class="dz-panel" style="margin-bottom:0.85rem;">
+          <p class="dz-panel-title">Avoid at this pick</p>
+          {"".join(avoid_blocks)}
+        </div>
+        <div class="dz-panel">
+          <p class="dz-panel-title">Recent picks</p>
+          <div class="dz-recent">{recent_html}</div>
+        </div>
+      </div>
+    </div>
+    """
+
+
+def _draw_live_board(analyst, config: dict, show_fit: bool) -> None:
+    try:
+        draft = fetch_sleeper_draft(config["league_id"], config.get("username", ""))
+        if draft and analyst._snapshot is not None:
+            analyst._snapshot["draft"] = draft
+        analysis = analyze_live_draft(analyst, config, draft=draft)
+    except Exception as exc:
+        st.error(f"Could not sync live draft: {exc}")
+        return
+
+    if not analysis.draft:
+        st.info("No Sleeper draft found for this league yet. Start the draft on Sleeper, then refresh.")
+        return
+
+    height = 920 if analysis.is_my_pick else 860
+    _embed_html(_render_analysis_html(analysis), css=LIVE_CSS, height=height)
+
+    if not show_fit:
+        st.caption("Roster-fit scoring activates once the draft starts on Sleeper.")
+
+
+def _supports_auto_refresh() -> bool:
+    try:
+        st.fragment(run_every=timedelta(seconds=12))
+        return True
+    except TypeError:
+        return False
+
+
+def render_live_draft(analyst, config: dict, *, show_fit: bool = True) -> None:
+    """Live draft page with optional auto-refresh during active drafts."""
+    auto_ok = _supports_auto_refresh()
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        if st.button("Refresh now", type="primary", use_container_width=True):
+            st.cache_data.clear()
+            analyst.refresh_draft()
+            st.rerun()
+    with c2:
+        auto = st.toggle("Auto-sync (12s)", value=True, disabled=not auto_ok)
+    with c3:
+        st.caption(
+            "Connected to Sleeper · Rankings use ADP, FantasyCalc value, roster fit, and upside."
+            if auto_ok else
+            "Connected to Sleeper · Tap Refresh during your draft (auto-sync needs Streamlit 1.37+)."
+        )
+
+    if auto_ok and auto:
+        @st.fragment(run_every=timedelta(seconds=12))
+        def _poll():
+            _draw_live_board(analyst, config, show_fit)
+
+        _poll()
+    else:
+        _draw_live_board(analyst, config, show_fit)

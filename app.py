@@ -30,6 +30,7 @@ from src.ui_platform import (
     render_tools,
     render_trade_calculator,
 )
+from src.ui_live_draft import render_live_draft
 from src.version import APP_BUILD
 
 ROOT = Path(__file__).resolve().parent
@@ -608,14 +609,17 @@ elif page == "draft":
     try:
         view = st.radio(
             "Show",
-            ["My picks", "Upside targets", "All players", "Live draft"],
+            ["Live draft", "My picks", "Upside targets", "All players"],
             horizontal=True,
             label_visibility="collapsed",
         )
 
         keepers = ctx["keepers"]
 
-        if view == "My picks":
+        if view == "Live draft":
+            render_live_draft(analyst, config, show_fit=show_fit)
+
+        elif view == "My picks":
             st.subheader("Pick recommendations")
             st.caption(
                 "Ranked by ADP window and upside at your next snake pick."
@@ -679,58 +683,6 @@ elif page == "draft":
                 )
                 st.dataframe(styled, width="stretch", hide_index=True, height=480)
 
-        else:
-            if st.button("Refresh live draft"):
-                load_live_draft.clear()
-                analyst.refresh_draft()
-                st.rerun()
-
-            live = load_live_draft(config["league_id"], config["username"])
-            if not live:
-                st.info("No Sleeper draft found yet.")
-            else:
-                on_clock = live.get("on_clock") or {}
-                my_user_id = analyst._ensure_snapshot().get("my_user_id") or live.get("my_user_id")
-                is_my_pick = on_clock.get("user_id") == my_user_id
-                live_teams = live.get("teams") or teams
-
-                s1, s2, s3 = st.columns(3)
-                s1.metric("Status", live.get("status", "—"))
-                s2.metric("Progress", f"{live.get('completed_picks', 0)}/{live.get('total_picks', '?')}")
-                s3.metric("Your slot", live.get("my_slot") or "—")
-
-                if on_clock:
-                    if is_my_pick:
-                        st.success(f"You're on the clock — Pick {on_clock.get('pick_no')} (Rd {on_clock.get('round')})")
-                    else:
-                        st.info(f"On clock: **{on_clock.get('manager')}** · Pick {on_clock.get('pick_no')}")
-
-                live_recs, live_next, live_target = analyst.pick_recommendations(
-                    keeper_names=keepers,
-                    limit=5,
-                    draft=live,
-                    my_slot=live.get("my_slot"),
-                    on_clock=is_my_pick,
-                )
-                if is_my_pick:
-                    st.subheader("Pick now")
-                    _render_pick_cards(live_recs, highlight_first=True, show_fit=show_fit)
-                else:
-                    label = format_pick_label(live_target, live_teams) if live_target else "your next pick"
-                    st.subheader(f"Queue for {label}")
-                    _render_pick_cards(live_recs[:4], show_fit=show_fit)
-
-                picks = live.get("picks", [])
-                if picks:
-                    with st.expander("Recent picks", expanded=False):
-                        pdf = pd.DataFrame([{
-                            "Pick": p.get("pick_no"),
-                            "Rd": p.get("round"),
-                            "Manager": p.get("manager"),
-                            "Player": p.get("player_name"),
-                            "Pos": p.get("position"),
-                        } for p in reversed(picks[-24:])])
-                        _safe_dataframe(pdf, height=320)
     except Exception as e:
         st.error(f"Draft failed: {e}")
 
