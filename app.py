@@ -56,6 +56,34 @@ def get_config() -> dict:
     return base
 
 
+def _needs_league_setup(config: dict) -> bool:
+    league_id = config.get("league_id") or ""
+    username = config.get("username") or ""
+    return not league_id or league_id == "YOUR_LEAGUE_ID" or not username or username == "YOUR_SLEEPER_USERNAME"
+
+
+def _run_save_and_sync(config: dict, league_id: str, username: str, league_name: str) -> None:
+    if not league_id or not username:
+        st.error("Enter league ID and username.")
+        return
+    updated = {**config, "league_id": league_id.strip(), "username": username.strip()}
+    if league_name:
+        updated["league_name"] = league_name.strip()
+    save_config(updated)
+    try:
+        with st.spinner("Syncing from Sleeper..."):
+            analyst = DynastyAnalyst(updated)
+            analyst.sync()
+            analyst.news.close()
+        save_config({**updated, **analyst.config})
+        load_grades.clear()
+        load_live_draft.clear()
+        st.success("League synced!")
+        st.rerun()
+    except Exception as e:
+        st.error(str(e))
+
+
 def _cell(value, fallback: str = "—") -> str:
     if value is None or value == "":
         return fallback
@@ -352,25 +380,7 @@ with st.sidebar:
         league_name = st.text_input("League name (optional)", value=config.get("league_name", ""))
 
         if st.button("Save & Sync", type="primary", use_container_width=True):
-            if not league_id or not username:
-                st.error("Enter league ID and username.")
-            else:
-                updated = {**config, "league_id": league_id.strip(), "username": username.strip()}
-                if league_name:
-                    updated["league_name"] = league_name.strip()
-                save_config(updated)
-                try:
-                    with st.spinner("Syncing from Sleeper..."):
-                        analyst = DynastyAnalyst(updated)
-                        snapshot = analyst.sync()
-                        analyst.news.close()
-                    save_config({**updated, **analyst.config})
-                    load_grades.clear()
-                    load_live_draft.clear()
-                    st.success("League synced!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(str(e))
+            _run_save_and_sync(config, league_id, username, league_name)
 
     if st.button("Refresh all data", use_container_width=True):
         try:
@@ -388,22 +398,43 @@ with st.sidebar:
             st.error(str(e))
 
 config = get_config()
-if (
-    not config.get("league_id")
-    or config.get("league_id") == "YOUR_LEAGUE_ID"
-    or not config.get("username")
-):
+if _needs_league_setup(config):
     st.title("Dynasty Fantasy Football Analyst")
-    st.info("Open **League settings** in the sidebar, enter your Sleeper league ID and username, then click **Save & Sync**.")
+    st.caption(
+        "No league connected yet. Use the form below — or click the **›** arrow in the top-left to open the sidebar."
+    )
+    st.markdown("### Connect your Sleeper league")
+    c1, c2 = st.columns(2)
+    with c1:
+        setup_league_id = st.text_input(
+            "Sleeper League ID",
+            value="" if config.get("league_id") == "YOUR_LEAGUE_ID" else config.get("league_id", ""),
+            placeholder="1363674260144418816",
+            help="From your league URL: sleeper.app/leagues/1234567890",
+            key="setup_league_id",
+        )
+    with c2:
+        setup_username = st.text_input(
+            "Your Sleeper username",
+            value="" if config.get("username") == "YOUR_SLEEPER_USERNAME" else config.get("username", ""),
+            placeholder="jon696969",
+            key="setup_username",
+        )
+    setup_league_name = st.text_input(
+        "League name (optional)",
+        value=config.get("league_name", ""),
+        key="setup_league_name",
+    )
+    if st.button("Save & Sync", type="primary", key="setup_save_sync"):
+        _run_save_and_sync(config, setup_league_id, setup_username, setup_league_name)
+
     st.markdown(
         """
-        **What you'll get**
-        - **Home** dashboard with next picks and breakout targets
-        - **Rankings** — Dynatyze boards, ADP, picks, expert consensus
-        - **Analytics** — screener, scatterplot, trade wire, trade database
-        - **Tools** — portfolio manager, mock draft, start/sit
-        - **Trade Calc** — graded trades with FantasyCalc + your league rosters
-        - **League** map and trade proposals synced from Sleeper
+        **What you'll get after syncing**
+        - **My Leagues** dashboard with lineup tools, depth chart, and waiver radar
+        - **Rankings** — dynasty board, ADP, projections
+        - **Trade Calc** — FantasyCalc-graded trades for your league
+        - **Draft** — live pick recommendations and keeper-aware next pick
         """
     )
     st.stop()
