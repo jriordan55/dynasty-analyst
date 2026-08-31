@@ -179,17 +179,22 @@ class SleeperClient:
         return None
 
     def get_draft_state(self, my_user_id: str | None = None) -> dict | None:
-        """Latest league draft with picks and slot mapping."""
+        """Active league draft (prefers in-progress mock or live draft)."""
         drafts = self.get_drafts()
         if not drafts:
             return None
 
-        draft_meta = drafts[0]
+        draft_meta = select_active_draft(drafts)
+        if not draft_meta:
+            return None
+
         draft_id = draft_meta["draft_id"]
         draft = self.get_draft(draft_id)
         picks = self.get_draft_picks(draft_id)
         users = self.get_users()
+        rosters = self.get_rosters()
         user_map = {u["user_id"]: u for u in users}
+        roster_to_owner = {r["roster_id"]: r.get("owner_id") for r in rosters}
 
         slot_by_user: dict[str, int] = {}
         for uid, slot in (draft.get("draft_order") or draft_meta.get("draft_order") or {}).items():
@@ -199,7 +204,8 @@ class SleeperClient:
         for pick in picks:
             meta = pick.get("metadata") or {}
             name = meta.get("full_name") or f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
-            owner = user_map.get(pick.get("picked_by", ""), {})
+            owner_id = pick.get("picked_by") or roster_to_owner.get(pick.get("roster_id"))
+            owner = user_map.get(owner_id or "", {})
             enriched_picks.append({
                 **pick,
                 "player_name": name,
@@ -212,18 +218,22 @@ class SleeperClient:
         total_picks = total_rosters * rounds
         completed = len({p["pick_no"] for p in picks if p.get("pick_no") and p.get("player_id")})
 
+        status = draft.get("status") or draft_meta.get("status")
         my_slot = slot_by_user.get(my_user_id or "", None)
         on_clock = _pick_on_clock(
-            picks, slot_by_user, user_map, total_rosters,
-            draft_status=draft.get("status") or draft_meta.get("status"),
+            enriched_picks, slot_by_user, user_map, total_rosters,
+            draft_status=status,
             rounds=rounds,
         )
 
+        label, is_mock = draft_display_info(draft_meta, draft)
+
         return {
             "draft_id": draft_id,
-            "status": draft.get("status") or draft_meta.get("status"),
+            "status": status,
             "type": draft.get("type") or draft_meta.get("type"),
             "draft_order": slot_by_user,
+            "slot_to_roster_id": draft.get("slot_to_roster_id") or {},
             "teams": total_rosters,
             "rounds": rounds,
             "my_slot": my_slot,
@@ -233,6 +243,17 @@ class SleeperClient:
             "completed_picks": completed,
             "on_clock": on_clock,
             "user_map": user_map,
+            "draft_label": label,
+            "is_mock": is_mock,
+            "metadata": draft.get("metadata") or draft_meta.get("metadata") or {},
+            "available_drafts": [
+                {
+                    "draft_id": d.get("draft_id"),
+                    "status": d.get("status"),
+                    "label": draft_display_info(d, d)[0],
+                }
+                for d in drafts
+            ],
         }
 
     def get_league_snapshot(self, my_user_id: str | None = None) -> dict:
@@ -316,6 +337,39 @@ class SleeperClient:
         self.close()
 
 
+def select_active_draft(drafts: list[dict]) -> dict | None:
+    """Pick the draft board to sync — active mock/live first, then upcoming league draft."""
+    if not drafts:
+        return None
+
+    status_rank = {"drafting": 0, "paused": 1, "pre_draft": 2, "complete": 3}
+
+    def sort_key(d: dict) -> tuple:
+        status = (d.get("status") or "pre_draft").lower()
+        rank = status_rank.get(status, 9)
+        ts = d.get("start_time") or d.get("last_picked") or d.get("created") or 0
+        return (rank, -int(ts))
+
+    return sorted(drafts, key=sort_key)[0]
+
+
+def draft_display_info(draft_meta: dict, draft_full: dict | None = None) -> tuple[str, bool]:
+    """Human label and mock flag for UI."""
+    meta = (draft_full or {}).get("metadata") or draft_meta.get("metadata") or {}
+    name = (meta.get("name") or "").lower()
+    desc = (meta.get("description") or "").lower()
+    is_mock = "mock" in name or "mock" in desc
+
+    status = (draft_full or draft_meta).get("status") or "pre_draft"
+    if status == "drafting":
+        return ("Mock draft" if is_mock else "Live draft"), is_mock
+    if status == "complete":
+        return ("Mock draft (done)" if is_mock else "Draft complete"), is_mock
+    if is_mock:
+        return "Mock draft (scheduled)", True
+    return "League draft", False
+
+
 def _pick_on_clock(
     picks: list[dict],
     slot_by_user: dict[str, int],
@@ -326,6 +380,8 @@ def _pick_on_clock(
 ) -> dict | None:
     """Determine who is on the clock for snake drafts."""
     if not slot_by_user:
+        return None
+    if (draft_status or "").lower() in ("complete", "complete_mock"):
         return None
 
     from src.draft import current_draft_pick

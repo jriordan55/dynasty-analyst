@@ -7,6 +7,7 @@ from datetime import timedelta
 
 import streamlit as st
 
+from src.draft import is_draft_live, is_pre_draft
 from src.live_draft import analyze_live_draft, fetch_sleeper_draft, next_pick_label
 from src.ui_dynatyze import _embed_html
 
@@ -75,7 +76,11 @@ body { margin: 0; background: transparent; color: #e5e7eb; font-family: Montserr
 .dz-pos-RB { background: #14532d; color: #86efac; }
 .dz-pos-WR { background: #581c87; color: #d8b4fe; }
 .dz-pos-TE { background: #78350f; color: #fcd34d; }
-.dz-empty { color: #6b7280; font-size: 0.75rem; text-align: center; padding: 1.25rem 0.5rem; }
+.dz-hint { background: #111827; border: 1px solid #374151; border-radius: 0.55rem; padding: 0.55rem 0.75rem; color: #9ca3af; font-size: 0.68rem; line-height: 1.45; margin-bottom: 0.85rem; }
+.dz-hint b { color: #10b981; }
+.dz-draft-badge { display: inline-block; background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.35); color: #93c5fd; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.06em; padding: 0.12rem 0.45rem; border-radius: 999px; margin-left: 0.35rem; text-transform: uppercase; }
+.dz-draft-badge.mock { background: rgba(168,85,247,0.12); border-color: rgba(168,85,247,0.35); color: #d8b4fe; }
+.dz-draft-badge.live { background: rgba(16,185,129,0.12); border-color: rgba(16,185,129,0.35); color: #10b981; }
 """
 
 POS_CLASS = {"QB": "QB", "RB": "RB", "WR": "WR", "TE": "TE"}
@@ -96,12 +101,26 @@ def _fmt_num(val) -> str:
 
 def _render_analysis_html(analysis) -> str:
     status = (analysis.status or "unknown").replace("_", " ").title()
-    drafting = analysis.status == "drafting"
+    drafting = is_draft_live(analysis.draft) or analysis.status == "drafting"
+    label = html.escape(analysis.draft_label or "League draft")
+    badge_cls = "mock" if analysis.is_mock else ("live" if drafting else "")
+    badge = f'<span class="dz-draft-badge {badge_cls}">{label}</span>'
+
     pulse = (
-        '<span class="dz-live-pulse"><span class="dz-dot"></span> Live</span>'
+        '<span class="dz-live-pulse"><span class="dz-dot"></span> Syncing live</span>'
         if drafting else
         f'<span class="dz-live-pulse off">{html.escape(status)}</span>'
     )
+
+    hint = ""
+    if is_pre_draft(analysis.draft) and not analysis.is_mock:
+        hint = (
+            '<div class="dz-hint"><b>Ready when you are.</b> Start a '
+            '<b>mock draft</b> or your <b>league draft</b> in the Sleeper app on your phone — '
+            'this page auto-syncs every few seconds once picks begin.</div>'
+        )
+    elif analysis.status == "complete":
+        hint = '<div class="dz-hint">This draft board is complete. Start a new mock in Sleeper or wait for your league draft.</div>'
 
     if analysis.is_my_pick:
         clock_cls = "dz-clock on"
@@ -111,9 +130,13 @@ def _render_analysis_html(analysis) -> str:
         clock_cls = "dz-clock wait"
         clock_title = f"On clock: {html.escape(analysis.on_clock_manager)}"
         clock_sub = f"Pick {analysis.on_clock_pick} · Queue for {html.escape(next_pick_label(analysis))}"
+    elif is_pre_draft(analysis.draft):
+        clock_cls = "dz-clock wait"
+        clock_title = "Waiting for draft to start on Sleeper"
+        clock_sub = f"Your slot {analysis.my_slot or '—'} · Queue for {html.escape(next_pick_label(analysis))}"
     else:
         clock_cls = "dz-clock wait"
-        clock_title = "Waiting for draft to start" if analysis.pre_draft else "Draft board syncing"
+        clock_title = "Draft board syncing"
         clock_sub = next_pick_label(analysis)
 
     pick_title = "Pick now" if analysis.is_my_pick else f"Queue · {next_pick_label(analysis)}"
@@ -209,11 +232,12 @@ def _render_analysis_html(analysis) -> str:
     return f"""
     <div class="dz-live-head">
       <div>
-        <h2 class="dz-live-title">Live Draft Assistant</h2>
-        <p class="dz-live-sub">Sleeper sync · Updated {html.escape(analysis.updated_at)}</p>
+        <h2 class="dz-live-title">Live Draft Assistant {badge}</h2>
+        <p class="dz-live-sub">Sleeper sync · {html.escape(analysis.draft_type or 'snake')} · Updated {html.escape(analysis.updated_at)}</p>
       </div>
       {pulse}
     </div>
+    {hint}
     <div class="dz-metrics">
       <div class="dz-metric"><p class="dz-metric-label">Status</p><p class="dz-metric-val">{html.escape(status)}</p></div>
       <div class="dz-metric"><p class="dz-metric-label">Progress</p><p class="dz-metric-val">{analysis.completed_picks}/{analysis.total_picks}</p></div>
@@ -257,14 +281,26 @@ def _draw_live_board(analyst, config: dict, show_fit: bool) -> None:
         return
 
     if not analysis.draft:
-        st.info("No Sleeper draft found for this league yet. Start the draft on Sleeper, then refresh.")
+        st.info("No Sleeper draft found for this league yet. Start a mock or league draft in the Sleeper app.")
         return
 
-    height = 980 if analysis.is_my_pick else 920
+    if not analysis.my_slot:
+        st.warning(
+            "Could not match your Sleeper username to a draft slot. "
+            "Open **League settings** in the sidebar and confirm your username matches Sleeper exactly."
+        )
+
+    live_show_fit = not is_pre_draft(analysis.draft)
+    if is_draft_live(analysis.draft) and not live_show_fit:
+        live_show_fit = True
+
+    height = 1020 if analysis.is_my_pick else 960
     _embed_html(_render_analysis_html(analysis), css=LIVE_CSS, height=height)
 
-    if not show_fit:
-        st.caption("Roster-fit scoring activates once the draft starts on Sleeper.")
+    if not live_show_fit and not show_fit:
+        st.caption("Roster-fit scoring turns on automatically when your mock or league draft goes live on Sleeper.")
+    elif live_show_fit and not show_fit:
+        st.caption("Live draft detected — roster-fit scoring is active.")
 
 
 def _supports_auto_refresh() -> bool:
@@ -285,16 +321,18 @@ def render_live_draft(analyst, config: dict, *, show_fit: bool = True) -> None:
             analyst.refresh_draft()
             st.rerun()
     with c2:
-        auto = st.toggle("Auto-sync (12s)", value=True, disabled=not auto_ok)
+        auto = st.toggle("Auto-sync (8s)", value=True, disabled=not auto_ok)
     with c3:
         st.caption(
-            "Connected to Sleeper · ADP 7d movers, Vegas (VGS), FantasyCalc, roster fit, and upside."
+            "Works with Sleeper mock & league drafts on your phone · auto-syncs picks, ADP movers, and Vegas signals."
             if auto_ok else
             "Connected to Sleeper · Tap Refresh during your draft (auto-sync needs Streamlit 1.37+)."
         )
 
     if auto_ok and auto:
-        @st.fragment(run_every=timedelta(seconds=12))
+        interval = timedelta(seconds=8)
+
+        @st.fragment(run_every=interval)
         def _poll():
             _draw_live_board(analyst, config, show_fit)
 

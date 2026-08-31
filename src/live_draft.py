@@ -66,6 +66,9 @@ class LiveDraftAnalysis:
     recent_picks: list[dict]
     updated_at: str
     pre_draft: bool
+    draft_label: str = "League draft"
+    is_mock: bool = False
+    draft_type: str = "snake"
     risers: list = field(default_factory=list)
     fallers: list = field(default_factory=list)
 
@@ -376,6 +379,9 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
         fallers=fallers,
         updated_at=datetime.now(timezone.utc).strftime("%H:%M:%S UTC"),
         pre_draft=pre_draft,
+        draft_label=(draft or {}).get("draft_label") or "League draft",
+        is_mock=bool((draft or {}).get("is_mock")),
+        draft_type=(draft or {}).get("type") or "snake",
     )
 
 

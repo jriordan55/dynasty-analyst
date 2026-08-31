@@ -15,10 +15,17 @@ from src.models import (
 
 
 def is_pre_draft(draft: dict | None) -> bool:
-    """True before the league draft starts — roster-fit scoring is post-draft only."""
+    """True before live picks start — keeper assignments may already exist."""
     if not draft:
         return True
-    return draft.get("status") in (None, "", "pre_draft")
+    return (draft.get("status") or "pre_draft").lower() in ("", "pre_draft")
+
+
+def is_draft_live(draft: dict | None) -> bool:
+    """True while picks are being made on Sleeper (mock or real)."""
+    if not draft:
+        return False
+    return (draft.get("status") or "").lower() == "drafting"
 
 
 def pick_no_for_slot_round(slot: int, round_no: int, teams: int) -> int:
@@ -68,8 +75,8 @@ def filled_pick_numbers(draft: dict | None) -> set[int]:
 
 
 def current_draft_pick(draft: dict | None, teams: int = 12) -> int:
-    """Next pick number on the board (1 before the draft starts)."""
-    if not draft or is_pre_draft(draft):
+    """Next pick number on the board (first unfilled slot)."""
+    if not draft:
         return 1
     teams = draft_teams(draft, teams)
     rounds = draft.get("rounds") or 16
