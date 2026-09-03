@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import streamlit as st
 
-from src.draft import is_draft_live, is_pre_draft, should_poll_draft
+from src.draft import is_draft_live, is_pre_draft
 from src.live_draft import LiveDraftAnalysis, analyze_live_draft, fetch_sleeper_draft, next_pick_label
 from src.ui_dynatyze import _embed_html
 
@@ -107,7 +107,7 @@ def _render_analysis_html(analysis) -> str:
     badge = f'<span class="dz-draft-badge {badge_cls}">{label}</span>'
 
     pulse = (
-        '<span class="dz-live-pulse"><span class="dz-dot"></span> Syncing live</span>'
+        '<span class="dz-live-pulse"><span class="dz-dot"></span> Connected</span>'
         if drafting else
         f'<span class="dz-live-pulse off">{html.escape(status)}</span>'
     )
@@ -117,7 +117,7 @@ def _render_analysis_html(analysis) -> str:
         hint = (
             '<div class="dz-hint"><b>Ready when you are.</b> Start a '
             '<b>mock draft</b> or your <b>league draft</b> in the Sleeper app on your phone — '
-            'this page auto-syncs every few seconds once picks begin.</div>'
+            'this page stays connected once picks begin.</div>'
         )
     elif analysis.status == "complete":
         hint = '<div class="dz-hint">This draft board is complete. Start a new mock in Sleeper or wait for your league draft.</div>'
@@ -308,8 +308,22 @@ def _draw_live_board(analyst, config: dict, show_fit: bool) -> LiveDraftAnalysis
 
     live_show_fit = not is_pre_draft(analysis.draft)
 
-    height = 1020 if analysis.is_my_pick else 960
-    _embed_html(_render_analysis_html(analysis), css=LIVE_CSS, height=height)
+    board_sig = (
+        analysis.draft.get("draft_id"),
+        analysis.completed_picks,
+        analysis.on_clock_pick,
+        analysis.is_my_pick,
+        analysis.status,
+    )
+    prev_sig = st.session_state.get("live_draft_board_sig")
+    board_changed = prev_sig != board_sig or "live_draft_board_slot" not in st.session_state
+    if board_changed:
+        st.session_state["live_draft_board_sig"] = board_sig
+        height = 1020 if analysis.is_my_pick else 960
+        if "live_draft_board_slot" not in st.session_state:
+            st.session_state["live_draft_board_slot"] = st.empty()
+        with st.session_state["live_draft_board_slot"].container():
+            _embed_html(_render_analysis_html(analysis), css=LIVE_CSS, height=height)
 
     if not live_show_fit and not show_fit:
         st.caption("Roster-fit scoring turns on automatically when your mock or league draft goes live on Sleeper.")
@@ -320,43 +334,29 @@ def _draw_live_board(analyst, config: dict, show_fit: bool) -> LiveDraftAnalysis
 
 
 def render_live_draft(analyst, config: dict, *, show_fit: bool = True) -> None:
-    """Live draft page with auto-refresh during active Sleeper drafts."""
+    """Live draft page — stays connected via background fragment polling."""
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
         if st.button("Refresh now", type="primary", use_container_width=True):
             st.cache_data.clear()
             analyst.refresh_draft()
+            st.session_state.pop("live_draft_board_sig", None)
             st.rerun()
     with c2:
-        auto = st.toggle("Auto-sync (5s live)", value=True, key="live_draft_auto_toggle")
+        stay_connected = st.toggle("Stay connected", value=True, key="live_draft_stay_connected")
     with c3:
         st.caption(
-            "Keep this open while drafting in Sleeper — syncs mock & league drafts every 5s when live."
+            "Leave this open while drafting in Sleeper — picks and on-clock update in the background."
         )
 
-    if auto:
+    if stay_connected:
         try:
-            from streamlit_autorefresh import st_autorefresh
+            @st.fragment(run_every=timedelta(seconds=5))
+            def _connected_board() -> None:
+                _draw_live_board(analyst, config, show_fit)
 
-            st_autorefresh(interval=5000, limit=None, key="live_draft_autorefresh")
-        except ImportError:
-            try:
-                @st.fragment(run_every=timedelta(seconds=5))
-                def _poll_fragment():
-                    _draw_live_board(analyst, config, show_fit)
-
-                _poll_fragment()
-                return
-            except TypeError:
-                pass
-
-    analysis = _draw_live_board(analyst, config, show_fit)
-    if analysis and analysis.draft and auto:
-        poll = should_poll_draft(analysis.draft)
-        lp = analysis.draft.get("last_picked")
-        api = analysis.draft.get("api_status") or analysis.draft.get("status")
-        st.caption(
-            f"Sync · effective **{analysis.status}** · API `{api}` · "
-            f"{analysis.completed_picks} picks · poll={'on' if poll else 'off'}"
-            + (f" · last Sleeper pick `{lp}`" if lp else "")
-        )
+            _connected_board()
+        except TypeError:
+            _draw_live_board(analyst, config, show_fit)
+    else:
+        _draw_live_board(analyst, config, show_fit)
