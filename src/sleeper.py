@@ -221,17 +221,31 @@ class SleeperClient:
 
         return list(by_id.values())
 
-    def get_draft_state(self, my_user_id: str | None = None) -> dict | None:
+    def get_draft_state(
+        self,
+        my_user_id: str | None = None,
+        draft_id: str | None = None,
+    ) -> dict | None:
         """Active league draft (prefers in-progress mock or live draft)."""
         drafts = self._collect_draft_candidates(my_user_id)
-        if not drafts:
+        if not drafts and not draft_id:
             return None
 
-        draft_meta = select_active_draft(drafts)
-        if not draft_meta:
-            return None
+        if draft_id:
+            draft_meta = next((d for d in drafts if str(d.get("draft_id")) == str(draft_id)), None)
+            if not draft_meta:
+                try:
+                    draft_meta = self.get_draft(draft_id)
+                except Exception:
+                    return None
+        else:
+            draft_meta = select_active_draft(drafts)
+            if not draft_meta:
+                return None
+            draft_id = draft_meta["draft_id"]
 
-        draft_id = draft_meta["draft_id"]
+        if not draft_id:
+            draft_id = draft_meta.get("draft_id")
         draft = self.get_draft(draft_id)
         picks = self.get_draft_picks(draft_id)
         users = self.get_users()
@@ -318,8 +332,13 @@ class SleeperClient:
                     "draft_id": d.get("draft_id"),
                     "status": d.get("status"),
                     "label": draft_display_info(d, d)[0],
+                    "last_picked": d.get("last_picked"),
+                    "created": d.get("created"),
                 }
-                for d in drafts
+                for d in sorted(
+                    drafts,
+                    key=lambda x: -(x.get("last_picked") or x.get("created") or 0),
+                )
             ],
             "sync_source": "user+league" if my_user_id else "league",
         }
@@ -415,26 +434,33 @@ def merge_draft_records(a: dict, b: dict) -> dict:
 
 
 def select_active_draft(drafts: list[dict]) -> dict | None:
-    """Pick the draft board to sync — active mock/live first, then upcoming league draft."""
+    """Pick the draft board to sync — prefer the most recently active mock/live."""
     if not drafts:
         return None
 
     status_rank = {"drafting": 0, "paused": 1, "pre_draft": 2, "complete": 3}
+    now = time.time() * 1000
 
-    def activity_score(d: dict) -> int:
+    def recency_tier(d: dict) -> int:
         lp = d.get("last_picked") or 0
-        age_min = (time.time() * 1000 - lp) / 60_000 if lp else 999_999
-        if age_min <= 90:
-            return 3
+        created = d.get("created") or 0
         if lp:
+            age = (now - lp) / 60_000
+            if age <= 180:
+                return 0
+            if age <= 1440:
+                return 2
+            return 4
+        if created and (now - created) / 60_000 <= 90:
             return 1
-        return 0
+        return 3
 
     def sort_key(d: dict) -> tuple:
         status = (d.get("status") or "pre_draft").lower()
         rank = status_rank.get(status, 9)
-        ts = d.get("start_time") or d.get("last_picked") or d.get("created") or 0
-        return (rank, -activity_score(d), -int(ts))
+        lp = int(d.get("last_picked") or 0)
+        created = int(d.get("created") or 0)
+        return (rank, recency_tier(d), -lp, -created)
 
     return sorted(drafts, key=sort_key)[0]
 

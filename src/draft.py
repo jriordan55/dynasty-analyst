@@ -36,6 +36,13 @@ def draft_last_picked_age_minutes(draft: dict | None) -> float | None:
     return (time.time() * 1000 - float(ts)) / 60_000
 
 
+def _draft_timestamp_age_minutes(draft: dict, key: str) -> float | None:
+    ts = draft.get(key)
+    if not ts:
+        return None
+    return (time.time() * 1000 - float(ts)) / 60_000
+
+
 def is_draft_active(draft: dict | None) -> bool:
     """True when the board has live pick activity (mock or real)."""
     if not draft:
@@ -45,7 +52,13 @@ def is_draft_active(draft: dict | None) -> bool:
         return True
     if status in ("complete", "complete_mock"):
         return False
-    return has_live_picks(draft)
+    if has_live_picks(draft):
+        return True
+    lp_age = draft_last_picked_age_minutes(draft)
+    if lp_age is not None and lp_age <= 180:
+        return True
+    created_age = _draft_timestamp_age_minutes(draft, "created")
+    return created_age is not None and created_age <= 60
 
 
 def should_poll_draft(draft: dict | None, window_minutes: float = 90) -> bool:
@@ -376,6 +389,25 @@ def build_keeper_plan(
     )
 
 
+def build_draft_session_roster(my_team: dict | None, draft: dict | None, roster_id: int | None) -> dict | None:
+    """Roster built from picks made in the current Sleeper draft (not season roster)."""
+    if not my_team or not draft or roster_id is None:
+        return my_team
+    players: list[dict] = []
+    for pick in draft.get("picks", []):
+        if pick.get("roster_id") != roster_id or not pick.get("player_id"):
+            continue
+        meta = pick.get("metadata") or {}
+        players.append({
+            "name": pick.get("player_name") or meta.get("full_name") or "?",
+            "position": pick.get("position") or meta.get("position") or "?",
+            "team": meta.get("team") or "",
+            "is_starter": False,
+            "is_keeper": bool(pick.get("is_keeper")),
+        })
+    return {**my_team, "players": players}
+
+
 def build_draft_board(
     adp_map: dict[str, Player],
     snapshot: dict,
@@ -385,6 +417,7 @@ def build_draft_board(
     injuries: list[dict] | None = None,
     intel=None,
     limit: int = 75,
+    my_team_override: dict | None = None,
 ) -> list[DraftBoardEntry]:
     news = news or []
     injuries = injuries or []
@@ -392,11 +425,13 @@ def build_draft_board(
     drafted = _drafted_names(draft)
     scarcity = positional_scarcity(draft)
 
-    my_team = next((t for t in snapshot["teams"] if t.get("is_mine")), None)
+    my_team = my_team_override or next((t for t in snapshot["teams"] if t.get("is_mine")), None)
     if not my_team:
         return []
 
-    if keeper_names:
+    if my_team_override:
+        virtual = my_team
+    elif keeper_names:
         virtual = _virtual_team_after_keepers(my_team, set(keeper_names))
     else:
         virtual = my_team
