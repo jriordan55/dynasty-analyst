@@ -434,33 +434,32 @@ def merge_draft_records(a: dict, b: dict) -> dict:
 
 
 def select_active_draft(drafts: list[dict]) -> dict | None:
-    """Pick the draft board to sync — prefer the most recently active mock/live."""
+    """Pick the draft board to sync — prefer the mock/live session happening now."""
     if not drafts:
         return None
 
     status_rank = {"drafting": 0, "paused": 1, "pre_draft": 2, "complete": 3}
     now = time.time() * 1000
 
-    def recency_tier(d: dict) -> int:
-        lp = d.get("last_picked") or 0
-        created = d.get("created") or 0
-        if lp:
-            age = (now - lp) / 60_000
-            if age <= 180:
-                return 0
-            if age <= 1440:
-                return 2
-            return 4
-        if created and (now - created) / 60_000 <= 90:
-            return 1
-        return 3
-
     def sort_key(d: dict) -> tuple:
         status = (d.get("status") or "pre_draft").lower()
+        if status in ("complete", "complete_mock"):
+            return (99, 0, 0, 0)
         rank = status_rank.get(status, 9)
         lp = int(d.get("last_picked") or 0)
         created = int(d.get("created") or 0)
-        return (rank, recency_tier(d), -lp, -created)
+        start = int(d.get("start_time") or 0)
+        freshest = max(lp, created, start)
+        fresh_age = (now - freshest) / 60_000 if freshest else 99_999
+        if fresh_age <= 180:
+            tier = 0
+        elif fresh_age <= 720:
+            tier = 1
+        elif created and (now - created) / 60_000 <= 180:
+            tier = 2
+        else:
+            tier = 3
+        return (rank, tier, -freshest)
 
     return sorted(drafts, key=sort_key)[0]
 

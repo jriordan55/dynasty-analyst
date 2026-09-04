@@ -12,6 +12,7 @@ from src.draft import (
     build_draft_session_roster,
     effective_draft_status,
     format_pick_label,
+    is_draft_active,
     is_pre_draft,
     recommend_for_my_slot,
     round_for_pick_no,
@@ -574,10 +575,11 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
 
     draft_roster = build_draft_session_roster(my_team, draft, roster_id)
     my_drafted = list((draft_roster or {}).get("players") or [])
+    live_board = bool(draft and is_draft_active(draft))
 
     board = build_draft_board(
         analyst.adp_map, snapshot, config, keepers, intel=intel, limit=150,
-        my_team_override=draft_roster if not pre_draft and draft_roster else None,
+        my_team_override=draft_roster if live_board and draft_roster else None,
     )
 
     on_clock = (draft or {}).get("on_clock") or {}

@@ -43,6 +43,13 @@ def _draft_timestamp_age_minutes(draft: dict, key: str) -> float | None:
     return (time.time() * 1000 - float(ts)) / 60_000
 
 
+def has_board_picks(draft: dict | None) -> bool:
+    """Any player assigned on the draft board (keepers or live picks)."""
+    if not draft:
+        return False
+    return any(p.get("player_id") for p in draft.get("picks", []))
+
+
 def is_draft_active(draft: dict | None) -> bool:
     """True when the board has live pick activity (mock or real)."""
     if not draft:
@@ -54,11 +61,18 @@ def is_draft_active(draft: dict | None) -> bool:
         return False
     if has_live_picks(draft):
         return True
+    if has_board_picks(draft):
+        lp_age = draft_last_picked_age_minutes(draft)
+        if lp_age is None or lp_age <= 24 * 60:
+            return True
     lp_age = draft_last_picked_age_minutes(draft)
     if lp_age is not None and lp_age <= 180:
         return True
-    created_age = _draft_timestamp_age_minutes(draft, "created")
-    return created_age is not None and created_age <= 60
+    for key in ("created", "start_time"):
+        age = _draft_timestamp_age_minutes(draft, key)
+        if age is not None and age <= 180:
+            return True
+    return False
 
 
 def should_poll_draft(draft: dict | None, window_minutes: float = 90) -> bool:
@@ -229,6 +243,13 @@ def _drafted_names(draft: dict | None) -> set[str]:
         for pick in draft.get("picks", []):
             if pick.get("player_name"):
                 names.add(pick["player_name"].lower())
+            else:
+                meta = pick.get("metadata") or {}
+                name = meta.get("full_name") or (
+                    f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
+                )
+                if name:
+                    names.add(name.lower())
     return names
 
 
@@ -437,7 +458,7 @@ def build_draft_board(
         virtual = my_team
     needs = analyze_team_needs(virtual, config)
     pos_counts = dict(needs.position_counts)
-    pre_draft = is_pre_draft(draft)
+    pre_draft = is_pre_draft(draft) and not my_team_override
 
     entries: list[DraftBoardEntry] = []
     for player in sorted(adp_map.values(), key=lambda p: p.adp or 999):
