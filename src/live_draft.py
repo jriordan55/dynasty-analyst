@@ -114,12 +114,14 @@ def fetch_sleeper_draft(
     league_id: str,
     username: str,
     draft_id: str | None = None,
+    pinned_draft_id: str | None = None,
 ) -> dict | None:
     """Fresh draft state from Sleeper (no Streamlit cache)."""
     with SleeperClient(league_id) as sleeper:
         user = sleeper.resolve_user(username=username)
         my_id = user["user_id"] if user else None
-        return sleeper.get_draft_state(my_id, draft_id=draft_id)
+        target = draft_id or pinned_draft_id
+        return sleeper.get_draft_state(my_id, draft_id=target, pinned_draft_id=pinned_draft_id)
 
 
 def _quick_grade(adp: int | None, upside: float, news_flag: str) -> str:
@@ -569,11 +571,14 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
 
     my_team = next((t for t in snapshot.get("teams", []) if t.get("is_mine")), None)
     roster_id = my_team.get("roster_id") if my_team else None
+    my_user_id = snapshot.get("my_user_id") or (draft or {}).get("my_user_id")
     my_slot = (draft or {}).get("my_slot")
     teams = (draft or {}).get("teams") or 12
     pre_draft = is_pre_draft(draft)
 
-    draft_roster = build_draft_session_roster(my_team, draft, roster_id)
+    draft_roster = build_draft_session_roster(
+        my_team, draft, roster_id, my_user_id=my_user_id,
+    )
     my_drafted = list((draft_roster or {}).get("players") or [])
     live_board = bool(draft and is_draft_active(draft))
 
@@ -583,7 +588,6 @@ def analyze_live_draft(analyst, config: dict, draft: dict | None = None) -> Live
     )
 
     on_clock = (draft or {}).get("on_clock") or {}
-    my_user_id = snapshot.get("my_user_id") or (draft or {}).get("my_user_id")
     is_my_pick = bool(
         on_clock
         and (

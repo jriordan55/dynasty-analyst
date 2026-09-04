@@ -30,7 +30,7 @@ from src.ui_platform import (
     render_tools,
     render_trade_calculator,
 )
-from src.ui_live_draft import render_live_draft
+from src.ui_live_draft import normalize_draft_id, render_live_draft
 from src.version import APP_BUILD
 
 ROOT = Path(__file__).resolve().parent
@@ -77,7 +77,13 @@ def _needs_league_setup(config: dict) -> bool:
     )
 
 
-def _run_save_and_sync(config: dict, league_id: str, username: str, league_name: str) -> None:
+def _run_save_and_sync(
+    config: dict,
+    league_id: str,
+    username: str,
+    league_name: str,
+    draft_id: str = "",
+) -> None:
     league_id = _normalize_league_id(league_id)
     username = (username or "").strip()
     if not league_id or not username:
@@ -92,6 +98,11 @@ def _run_save_and_sync(config: dict, league_id: str, username: str, league_name:
     updated = {**config, "league_id": league_id, "username": username}
     if league_name:
         updated["league_name"] = league_name.strip()
+    parsed_draft = normalize_draft_id(draft_id)
+    if parsed_draft:
+        updated["draft_id"] = parsed_draft
+    elif draft_id.strip() == "":
+        updated["draft_id"] = ""
     save_config(updated)
     try:
         with st.spinner("Syncing from Sleeper..."):
@@ -401,9 +412,14 @@ with st.sidebar:
             value=config.get("username", ""),
         )
         league_name = st.text_input("League name (optional)", value=config.get("league_name", ""))
+        draft_id_input = st.text_input(
+            "Sleeper draft ID (optional)",
+            value=config.get("draft_id", "") or "",
+            help="Standalone mock: paste ID from sleeper.com/draft/nfl/… or add ?draft=ID to this app's URL",
+        )
 
         if st.button("Save & Sync", type="primary", use_container_width=True):
-            _run_save_and_sync(config, league_id, username, league_name)
+            _run_save_and_sync(config, league_id, username, league_name, draft_id_input)
 
     if st.button("Refresh all data", use_container_width=True):
         try:

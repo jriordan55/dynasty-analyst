@@ -1,6 +1,7 @@
 {
   "platform": "sleeper",
   "league_id": "YOUR_LEAGUE_ID",
+  "draft_id": "",
   "username": "YOUR_SLEEPER_USERNAME",
   "team_name": "My Dynasty Team",
   "scoring": "ppr",

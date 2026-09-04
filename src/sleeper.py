@@ -164,18 +164,37 @@ class SleeperClient:
         cache_path.write_text(json.dumps(players), encoding="utf-8")
         return players
 
+    def get_user_by_id(self, user_id: str) -> dict:
+        return self._get(f"/user/{user_id}")
+
+    def get_user_by_username(self, username: str) -> dict | None:
+        try:
+            data = self._get(f"/user/{username}")
+            return data if isinstance(data, dict) and data.get("user_id") else None
+        except Exception:
+            return None
+
     def resolve_user(self, username: str | None = None, user_id: str | None = None) -> dict | None:
         users = self.get_users()
         if user_id:
-            return next((u for u in users if u["user_id"] == user_id), None)
+            hit = next((u for u in users if u["user_id"] == user_id), None)
+            if hit:
+                return hit
+            try:
+                return self.get_user_by_id(user_id)
+            except Exception:
+                return None
         if username:
             uname = username.lower()
-            return next(
+            hit = next(
                 (u for u in users if u.get("display_name", "").lower() == uname
                  or u.get("username", "").lower() == uname
                  or u.get("metadata", {}).get("team_name", "").lower() == uname),
                 None,
             )
+            if hit:
+                return hit
+            return self.get_user_by_username(username)
         return None
 
     def get_user_drafts(self, user_id: str, season: str | None = None, sport: str | None = None) -> list[dict]:
@@ -191,8 +210,12 @@ class SleeperClient:
         except Exception:
             return []
 
-    def _collect_draft_candidates(self, my_user_id: str | None) -> list[dict]:
-        """Merge league + user draft feeds; user endpoint is often fresher for mocks."""
+    def _collect_draft_candidates(
+        self,
+        my_user_id: str | None,
+        pinned_draft_id: str | None = None,
+    ) -> list[dict]:
+        """Merge league + user draft feeds; includes standalone mocks (no league_id)."""
         by_id: dict[str, dict] = {}
         for d in self.get_drafts() or []:
             did = d.get("draft_id")
@@ -201,7 +224,8 @@ class SleeperClient:
 
         if my_user_id:
             for d in self.get_user_drafts(my_user_id):
-                if str(d.get("league_id") or "") != str(self.league_id):
+                league_id = d.get("league_id")
+                if league_id and str(league_id) != str(self.league_id):
                     continue
                 did = d.get("draft_id")
                 if not did:
@@ -210,6 +234,12 @@ class SleeperClient:
                     by_id[did] = merge_draft_records(by_id[did], d)
                 else:
                     by_id[did] = d
+
+        if pinned_draft_id and pinned_draft_id not in by_id:
+            try:
+                by_id[pinned_draft_id] = self.get_draft(pinned_draft_id)
+            except Exception:
+                pass
 
         league = self.get_league()
         league_draft_id = league.get("draft_id")
@@ -225,19 +255,22 @@ class SleeperClient:
         self,
         my_user_id: str | None = None,
         draft_id: str | None = None,
+        pinned_draft_id: str | None = None,
     ) -> dict | None:
-        """Active league draft (prefers in-progress mock or live draft)."""
-        drafts = self._collect_draft_candidates(my_user_id)
-        if not drafts and not draft_id:
+        """Active league or standalone Sleeper draft."""
+        target_id = draft_id or pinned_draft_id
+        drafts = self._collect_draft_candidates(my_user_id, pinned_draft_id=target_id)
+        if not drafts and not target_id:
             return None
 
-        if draft_id:
-            draft_meta = next((d for d in drafts if str(d.get("draft_id")) == str(draft_id)), None)
+        if target_id:
+            draft_meta = next((d for d in drafts if str(d.get("draft_id")) == str(target_id)), None)
             if not draft_meta:
                 try:
-                    draft_meta = self.get_draft(draft_id)
+                    draft_meta = self.get_draft(target_id)
                 except Exception:
                     return None
+            draft_id = target_id
         else:
             draft_meta = select_active_draft(drafts)
             if not draft_meta:
@@ -248,8 +281,10 @@ class SleeperClient:
             draft_id = draft_meta.get("draft_id")
         draft = self.get_draft(draft_id)
         picks = self.get_draft_picks(draft_id)
-        users = self.get_users()
-        rosters = self.get_rosters()
+        is_standalone = not draft.get("league_id")
+
+        users = self.get_users() if not is_standalone else []
+        rosters = self.get_rosters() if not is_standalone else []
         players = self.get_all_players()
         user_map = {u["user_id"]: u for u in users}
         roster_to_owner = {r["roster_id"]: r.get("owner_id") for r in rosters}
@@ -258,6 +293,18 @@ class SleeperClient:
         draft_order = draft.get("draft_order") or draft_meta.get("draft_order") or {}
         for uid, slot in draft_order.items():
             slot_by_user[str(uid)] = int(slot)
+
+        participant_ids: set[str] = set(slot_by_user.keys())
+        for pick in picks:
+            if pick.get("picked_by"):
+                participant_ids.add(str(pick["picked_by"]))
+        for uid in participant_ids:
+            if uid in user_map:
+                continue
+            try:
+                user_map[uid] = self.get_user_by_id(uid)
+            except Exception:
+                user_map[uid] = {"user_id": uid, "display_name": f"Team {uid[:6]}"}
 
         enriched_picks = []
         for pick in picks:
@@ -269,11 +316,16 @@ class SleeperClient:
                     f"{player_row.get('first_name', '')} {player_row.get('last_name', '')}".strip()
                 )
             owner_id = pick.get("picked_by") or roster_to_owner.get(pick.get("roster_id"))
-            owner = user_map.get(owner_id or "", {})
+            owner = user_map.get(str(owner_id or ""), {})
+            slot_label = pick.get("draft_slot")
+            manager = (
+                owner.get("display_name") or owner.get("username")
+                or (f"Team {slot_label}" if slot_label else "Unknown")
+            )
             enriched_picks.append({
                 **pick,
                 "player_name": name,
-                "manager": owner.get("display_name") or owner.get("username", "Unknown"),
+                "manager": manager,
                 "position": meta.get("position") or (
                     players.get(str(pick.get("player_id") or ""), {}).get("position", "")
                 ),
@@ -305,6 +357,9 @@ class SleeperClient:
             on_clock["is_mine"] = str(on_clock.get("user_id")) == str(my_user_id)
 
         label, is_mock = draft_display_info(draft_meta, draft)
+        if is_standalone:
+            label = "Standalone mock" if draft.get("status") == "drafting" else f"Standalone mock ({draft.get('status', '')})"
+            is_mock = True
 
         return {
             "draft_id": draft_id,
@@ -312,6 +367,8 @@ class SleeperClient:
             "api_status": status,
             "last_picked": draft.get("last_picked") or draft_meta.get("last_picked"),
             "is_active": is_draft_active(draft_stub),
+            "is_standalone": is_standalone,
+            "league_id": draft.get("league_id"),
             "type": draft.get("type") or draft_meta.get("type"),
             "draft_order": slot_by_user,
             "slot_to_roster_id": draft.get("slot_to_roster_id") or {},
@@ -466,7 +523,16 @@ def select_active_draft(drafts: list[dict]) -> dict | None:
 
 def draft_display_info(draft_meta: dict, draft_full: dict | None = None) -> tuple[str, bool]:
     """Human label and mock flag for UI."""
-    meta = (draft_full or {}).get("metadata") or draft_meta.get("metadata") or {}
+    full = draft_full or draft_meta
+    if not full.get("league_id"):
+        status = (full.get("status") or "pre_draft").lower()
+        if status == "drafting":
+            return "Standalone mock", True
+        if status == "complete":
+            return "Standalone mock (done)", True
+        return "Standalone mock", True
+
+    meta = full.get("metadata") or draft_meta.get("metadata") or {}
     name = (meta.get("name") or "").lower()
     desc = (meta.get("description") or "").lower()
     meta_type = (meta.get("type") or "").lower()

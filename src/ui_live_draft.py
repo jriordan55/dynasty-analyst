@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import streamlit as st
 
@@ -23,6 +25,35 @@ COLUMN_HELP = {
     "Tags": "VALUE, NEED, RISER, VEGAS+, etc.",
     "Notes": "Fit reason, injury flag, or intel note.",
 }
+
+
+def normalize_draft_id(raw: str | None) -> str | None:
+    """Extract draft ID from a Sleeper URL or bare numeric ID."""
+    if not raw:
+        return None
+    text = str(raw).strip()
+    match = re.search(r"/draft/nfl/(\d+)", text)
+    if match:
+        return match.group(1)
+    digits = re.sub(r"\D", "", text)
+    return digits or None
+
+
+def resolve_draft_id(config: dict) -> str | None:
+    """Draft ID from URL query param, config, or session."""
+    for key in ("draft", "draft_id"):
+        try:
+            qp = st.query_params.get(key)
+        except Exception:
+            qp = None
+        if qp:
+            parsed = normalize_draft_id(qp if isinstance(qp, str) else str(qp))
+            if parsed:
+                return parsed
+    cfg = normalize_draft_id(config.get("draft_id"))
+    if cfg:
+        return cfg
+    return st.session_state.get("live_draft_selected_id")
 
 
 def _available_dataframe(analysis) -> pd.DataFrame:
@@ -52,6 +83,7 @@ def _load_analysis(analyst, config: dict, draft_id: str | None):
         config["league_id"],
         config.get("username", ""),
         draft_id=draft_id,
+        pinned_draft_id=draft_id,
     )
     if draft and analyst._snapshot is not None:
         analyst._snapshot["draft"] = draft
@@ -69,7 +101,7 @@ def render_live_draft(analyst, config: dict, *, show_fit: bool = True) -> None:
     except ImportError:
         pass
 
-    draft_id = st.session_state.get("live_draft_selected_id")
+    draft_id = resolve_draft_id(config)
 
     try:
         analysis = _load_analysis(analyst, config, draft_id)

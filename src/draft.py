@@ -197,14 +197,33 @@ def current_draft_pick(draft: dict | None, teams: int = 12) -> int:
     return total + 1
 
 
-def roster_owned_pick_numbers(draft: dict | None, roster_id: int | None) -> set[int]:
-    """Pick numbers already assigned to this roster (keepers + live picks)."""
-    if not draft or roster_id is None:
+def pick_belongs_to_user(
+    pick: dict,
+    *,
+    roster_id: int | None = None,
+    my_user_id: str | None = None,
+) -> bool:
+    """True when this draft pick belongs to the current user (league or standalone)."""
+    if roster_id is not None and pick.get("roster_id") == roster_id:
+        return True
+    if my_user_id and str(pick.get("picked_by") or "") == str(my_user_id):
+        return True
+    return False
+
+
+def roster_owned_pick_numbers(
+    draft: dict | None,
+    roster_id: int | None,
+    my_user_id: str | None = None,
+) -> set[int]:
+    """Pick numbers already assigned to this manager (keepers + live picks)."""
+    if not draft or (roster_id is None and not my_user_id):
         return set()
     return {
         p["pick_no"]
         for p in draft.get("picks", [])
-        if p.get("pick_no") and p.get("player_id") and p.get("roster_id") == roster_id
+        if p.get("pick_no") and p.get("player_id")
+        and pick_belongs_to_user(p, roster_id=roster_id, my_user_id=my_user_id)
     }
 
 
@@ -410,13 +429,22 @@ def build_keeper_plan(
     )
 
 
-def build_draft_session_roster(my_team: dict | None, draft: dict | None, roster_id: int | None) -> dict | None:
+def build_draft_session_roster(
+    my_team: dict | None,
+    draft: dict | None,
+    roster_id: int | None,
+    my_user_id: str | None = None,
+) -> dict | None:
     """Roster built from picks made in the current Sleeper draft (not season roster)."""
-    if not my_team or not draft or roster_id is None:
+    if not my_team or not draft:
+        return my_team
+    if roster_id is None and not my_user_id:
         return my_team
     players: list[dict] = []
     for pick in draft.get("picks", []):
-        if pick.get("roster_id") != roster_id or not pick.get("player_id"):
+        if not pick.get("player_id"):
+            continue
+        if not pick_belongs_to_user(pick, roster_id=roster_id, my_user_id=my_user_id):
             continue
         meta = pick.get("metadata") or {}
         players.append({
@@ -654,7 +682,8 @@ def recommend_for_my_slot(
         return recommend_picks(board, limit=limit, pre_draft=is_pre_draft(draft)), [], None
 
     current_pick = current_draft_pick(draft, teams)
-    owned = roster_owned_pick_numbers(draft, roster_id)
+    my_user_id = (draft or {}).get("my_user_id")
+    owned = roster_owned_pick_numbers(draft, roster_id, my_user_id=my_user_id)
 
     if on_clock:
         target = current_pick
