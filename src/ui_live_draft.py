@@ -40,7 +40,10 @@ def normalize_draft_id(raw: str | None) -> str | None:
 
 
 def resolve_draft_id(config: dict) -> str | None:
-    """Draft ID from URL query param, config, or session."""
+    """Draft ID from tab input, URL query param, config, or last connected draft."""
+    tab = normalize_draft_id(st.session_state.get("live_draft_input_id"))
+    if tab:
+        return tab
     for key in ("draft", "draft_id"):
         try:
             qp = st.query_params.get(key)
@@ -54,6 +57,23 @@ def resolve_draft_id(config: dict) -> str | None:
     if cfg:
         return cfg
     return st.session_state.get("live_draft_selected_id")
+
+
+def _init_draft_input(config: dict) -> None:
+    if "live_draft_input_id" in st.session_state:
+        return
+    for key in ("draft", "draft_id"):
+        try:
+            qp = st.query_params.get(key)
+        except Exception:
+            qp = None
+        if qp:
+            parsed = normalize_draft_id(qp if isinstance(qp, str) else str(qp))
+            if parsed:
+                st.session_state["live_draft_input_id"] = parsed
+                return
+    cfg = normalize_draft_id(config.get("draft_id"))
+    st.session_state["live_draft_input_id"] = cfg or ""
 
 
 def _available_dataframe(analysis) -> pd.DataFrame:
@@ -100,6 +120,14 @@ def render_live_draft(analyst, config: dict, *, show_fit: bool = True) -> None:
         st_autorefresh(interval=5000, limit=None, key="live_draft_poll")
     except ImportError:
         pass
+
+    _init_draft_input(config)
+    st.text_input(
+        "Sleeper draft ID or URL",
+        key="live_draft_input_id",
+        placeholder="Paste draft ID or sleeper.com/draft/nfl/… — leave blank for league auto-detect",
+        label_visibility="visible",
+    )
 
     draft_id = resolve_draft_id(config)
 
